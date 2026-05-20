@@ -1,0 +1,4 @@
+creation_rules:
+  - path_regex: clusters/nuc/talos/secrets/.*\.sops\.ya?ml$
+    age: age160x6mcw0yc66hwa29p64hulpatpkqj4sn62yyhjk8ayxfwlwyvgsnr33c3
+    encrypted_regex: '^(.*)$'

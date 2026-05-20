@@ -1,0 +1,20 @@
+# Talos generated configs and secrets
+clusters/**/talos/generated/
+clusters/**/talos/_out/
+
+clusters/**/talos/secrets/*.yaml
+!clusters/**/talos/secrets/*.sops.yaml
+
+**/talosconfig
+**/kubeconfig
+**/controlplane.yaml
+**/worker.yaml
+**/controlplane-final.yaml
+**/nuc*-controlplane.yaml
+
+# macOS
+.DS_Store
+
+# editor junk
+.vscode/
+.idea/
