@@ -18,9 +18,9 @@ their `data` and `stringData` fields so metadata remains reviewable by Flux. Loa
 and validate the repository identity before editing an encrypted manifest:
 
 ```bash
-just secrets
+just repo secrets
 mise exec -- sops kubernetes/path/to/secret.sops.yaml
-just verify
+just repo verify
 ```
 
 There is not yet a Just recipe for interactive SOPS editing, so this is an

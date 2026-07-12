@@ -30,7 +30,7 @@ tools, and validate the checkout:
 brew install mise
 mise trust
 mise install --locked
-mise exec -- just verify
+mise exec -- just repo verify
 ```
 
 `mise install --locked` is required on the first clone because `just` is itself a
@@ -44,16 +44,17 @@ Activate mise, then call Just directly:
 
 ```bash
 eval "$(mise activate zsh)"
-just verify
+just repo verify
 ```
 
 Or leave the shell unchanged and execute Just inside the mise environment:
 
 ```bash
-mise exec -- just verify
+mise exec -- just repo verify
 ```
 
-Run `just` or `mise exec -- just` to list all available workflows.
+Run `just` or `mise exec -- just` to list the command namespaces. Run a namespace
+without a recipe, such as `just talos`, to list its workflows.
 
 ## Mise Versus Just
 
@@ -63,10 +64,10 @@ environment. Just is the sole operational task runner; mise tasks are not used.
 | Action | Command |
 |---|---|
 | Bootstrap tools on a new clone | `mise install --locked` |
-| Refresh already-bootstrapped tools | `just tools` |
-| Inspect active tool versions | `just versions` or `mise ls --current` |
+| Refresh already-bootstrapped tools | `just repo tools` |
+| Inspect active tool versions | `just repo versions` or `mise ls --current` |
 | Diagnose mise itself | `mise doctor` |
-| Run a repository workflow | `just <recipe>` |
+| Run a repository workflow | `just <namespace> <recipe>` |
 | Run an ad hoc pinned CLI for investigation | `mise exec -- <tool> ...` |
 
 Prefer a Just recipe whenever one exists. Direct `talosctl`, `kubectl`, `helm`,
@@ -77,17 +78,17 @@ developing a new guarded recipe.
 
 | Recipe | Purpose | Availability |
 |---|---|---|
-| `just tools` | Install locked tools and print versions | Available |
-| `just versions` | Print the active tool versions | Available |
-| `just secrets` | Confirm the loaded age identity matches this repository | Available |
-| `just verify` | Check policy, Talos sources, and tracked content for secrets | Available |
-| `just secret-scan` | Run the repository secret scans directly | Available |
-| `just talos-generate` | Render and validate machine configs with Talhelper | Available |
-| `just talos-validate` | Strictly validate rendered Talos configs and Phase 2 policy | Available |
-| `just talos-apply <node>` | Apply one node's machine config | Enabled in Phase 3 |
-| `just talos-bootstrap` | Bootstrap the initial etcd member | Enabled in Phase 4 |
-| `just cilium-bootstrap` | Install the bootstrap Cilium release | Enabled in Phase 5 |
-| `just flux-bootstrap` | Bootstrap Flux against this repository | Enabled in Phase 6 |
+| `just repo tools` | Install locked tools and print versions | Available |
+| `just repo versions` | Print the active tool versions | Available |
+| `just repo secrets` | Confirm the loaded age identity matches this repository | Available |
+| `just repo verify` | Check policy, Talos sources, and tracked content for secrets | Available |
+| `just repo secret-scan` | Run the repository secret scans directly | Available |
+| `just talos generate` | Render and validate machine configs with Talhelper | Available |
+| `just talos validate` | Strictly validate rendered Talos configs and Phase 2 policy | Available |
+| `just talos apply <node>` | Apply one node's machine config | Enabled in Phase 3 |
+| `just bootstrap talos` | Bootstrap the initial etcd member | Enabled in Phase 4 |
+| `just bootstrap cilium` | Install the bootstrap Cilium release | Enabled in Phase 5 |
+| `just bootstrap flux` | Bootstrap Flux against this repository | Enabled in Phase 6 |
 
 Recipes for future phases currently fail with a phase-prerequisite message. That
 failure is intentional and prevents a documented interface from becoming an
@@ -102,28 +103,28 @@ For a short session:
 
 ```bash
 export SOPS_AGE_KEY='AGE-SECRET-KEY-...'
-just secrets
+just repo secrets
 ```
 
 For repeated operations, use an owner-readable file outside the repository:
 
 ```bash
 export SOPS_AGE_KEY_FILE=/secure/path/homelab-talos-age.txt
-just secrets
+just repo secrets
 ```
 
-`just secrets` derives the public recipient and rejects the wrong identity. See
+`just repo secrets` derives the public recipient and rejects the wrong identity. See
 [`docs/sops.md`](docs/sops.md) for encryption policy and
 [`docs/recovery.md`](docs/recovery.md) for restoring access.
 
 ## Normal Change Workflow
 
 1. Confirm the current phase and its prerequisites in the canonical plan.
-2. Run `just tools` after pulling a change to `.mise.toml` or `mise.lock`.
+2. Run `just repo tools` after pulling a change to `.mise.toml` or `mise.lock`.
 3. Load the SOPS identity only when the change requires encrypted material.
 4. Edit declarative source files, never generated output.
 5. Run the phase-specific generation or validation recipe when it is available.
-6. Run `just verify` before reviewing or committing the change.
+6. Run `just repo verify` before reviewing or committing the change.
 7. Inspect `git status` and confirm no generated config, decrypted secret,
    kubeconfig, talosconfig, or private key is trackable.
 
@@ -137,7 +138,7 @@ Tool upgrades are deliberate repository changes:
 1. Edit the version in `.mise.toml`.
 2. Run `mise install` to install the new version.
 3. Run `mise lock` to refresh cross-platform URLs, checksums, and provenance.
-4. Run `just versions` and `just verify`.
+4. Run `just repo versions` and `just repo verify`.
 5. Review and commit `.mise.toml` and `mise.lock` together.
 
 Use `mise install --locked` when consuming the repository. Use unlocked
@@ -146,6 +147,9 @@ Use `mise install --locked` when consuming the repository. Use unlocked
 ## Repository Boundaries
 
 - `talos/` holds declarative Talhelper inputs beginning in Phase 2.
+- `.just/` holds repository and cross-domain bootstrap command modules.
+- `talos/mod.just` and `kubernetes/mod.just` colocate domain commands with their
+  declarative sources; the root `.justfile` only declares namespaces.
 - `clusterconfig/` holds ignored rendered Talos machine configs.
 - `kubernetes/` holds Flux sources beginning in Phase 5.
 - `clusters/nuc/talos/` is the superseded manual layout and is not a rebuild input.

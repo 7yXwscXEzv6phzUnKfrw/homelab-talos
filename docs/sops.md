@@ -13,14 +13,14 @@ Load the private identity for one shell:
 
 ```bash
 export SOPS_AGE_KEY='AGE-SECRET-KEY-...'
-mise exec -- just secrets
+mise exec -- just repo secrets
 ```
 
 Alternatively, point SOPS at an owner-readable file outside the repository:
 
 ```bash
 export SOPS_AGE_KEY_FILE=/secure/path/homelab-talos-age.txt
-mise exec -- just secrets
+mise exec -- just repo secrets
 ```
 
 The check derives the public recipient and rejects an identity that does not
@@ -40,7 +40,7 @@ only umask and encrypted immediately to `talos/talsecret.sops.yaml`. The plainte
 temporary file was removed after the initial render. Do not regenerate this file:
 doing so creates a different cluster identity.
 
-`just talos-generate` requires `SOPS_AGE_KEY` or `SOPS_AGE_KEY_FILE`, verifies the
-loaded identity with `just secrets`, and lets Talhelper decrypt the tracked bundle
-while rendering ignored output. Flux decryption configuration arrives with Flux
-bootstrap, not during Phase 2.
+`just talos generate` requires `SOPS_AGE_KEY` or `SOPS_AGE_KEY_FILE`, verifies the
+loaded identity with `just repo secrets`, and lets Talhelper decrypt the tracked
+bundle while rendering ignored output. Flux decryption configuration arrives with
+Flux bootstrap, not during Phase 2.

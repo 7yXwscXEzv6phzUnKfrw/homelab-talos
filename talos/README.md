@@ -25,19 +25,19 @@ configs, or cluster identity into this directory.
 The developer workflow is:
 
 ```bash
-just secrets
-just talos-generate
-just talos-validate
-just verify
+just repo secrets
+just talos generate
+just talos validate
+just repo verify
 ```
 
 Generation is local and non-mutating. Applying a rendered config is a separate
-Phase 3 operation through `just talos-apply <node>` and must not be replaced with
+Phase 3 operation through `just talos apply <node>` and must not be replaced with
 an undocumented raw `talosctl apply-config` command.
 
-`just talos-generate` first verifies the loaded repository age identity, then
+`just talos generate` first verifies the loaded repository age identity, then
 decrypts the Talos bundle only inside the Talhelper process. It replaces the
-ignored `clusterconfig/` output and runs `just talos-validate`. Validation checks
+ignored `clusterconfig/` output and runs `just talos validate`. Validation checks
 all three configs in strict metal mode and asserts the Phase 2 endpoint, network,
 Secure Boot installer, CNI, kube-proxy, encryption, and volume decisions.
 

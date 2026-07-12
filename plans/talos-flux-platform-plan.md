@@ -480,6 +480,10 @@ or required environment variables are missing rather than silently using default
 
 ### Just Module Migration Gate
 
+Completed on 2026-07-12. The root dispatcher and four namespaced modules are in
+place, flat commands were removed, documentation uses the namespaced interface,
+and all repository-only acceptance checks below passed.
+
 Complete this repository-only migration before Phase 3 enables any machine
 configuration command:
 

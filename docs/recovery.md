@@ -8,7 +8,7 @@ Clone the private repository and install the toolchain from its lockfile:
 brew install mise
 mise trust
 mise install --locked
-mise exec -- just verify
+mise exec -- just repo verify
 ```
 
 The `manual-talos-v1.13.2` tag preserves the last Git state of the manual build.
@@ -21,14 +21,14 @@ for the current shell without placing it in the repository:
 
 ```bash
 export SOPS_AGE_KEY='AGE-SECRET-KEY-...'
-mise exec -- just secrets
+mise exec -- just repo secrets
 ```
 
 For longer operations, use an owner-readable file outside the repository:
 
 ```bash
 export SOPS_AGE_KEY_FILE=/secure/path/homelab-talos-age.txt
-mise exec -- just secrets
+mise exec -- just repo secrets
 ```
 
 Only the public recipient is committed. A lost private key makes new repository
@@ -41,7 +41,7 @@ Rendered machine configs and talosconfig can be recreated from Git plus the
 repository age identity:
 
 ```bash
-mise exec -- just talos-generate
+mise exec -- just talos generate
 ```
 
 The recipe verifies the age identity, renders `clusterconfig/nuc1.yaml` through
