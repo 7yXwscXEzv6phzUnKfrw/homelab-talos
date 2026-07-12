@@ -80,10 +80,10 @@ developing a new guarded recipe.
 | `just tools` | Install locked tools and print versions | Available |
 | `just versions` | Print the active tool versions | Available |
 | `just secrets` | Confirm the loaded age identity matches this repository | Available |
-| `just verify` | Check policy, ignore rules, and tracked content for secrets | Available |
+| `just verify` | Check policy, Talos sources, and tracked content for secrets | Available |
 | `just secret-scan` | Run the repository secret scans directly | Available |
-| `just talos-generate` | Render machine configs with Talhelper | Enabled in Phase 2 |
-| `just talos-validate` | Validate rendered Talos configs | Enabled in Phase 2 |
+| `just talos-generate` | Render and validate machine configs with Talhelper | Available |
+| `just talos-validate` | Strictly validate rendered Talos configs and Phase 2 policy | Available |
 | `just talos-apply <node>` | Apply one node's machine config | Enabled in Phase 3 |
 | `just talos-bootstrap` | Bootstrap the initial etcd member | Enabled in Phase 4 |
 | `just cilium-bootstrap` | Install the bootstrap Cilium release | Enabled in Phase 5 |
@@ -158,7 +158,8 @@ repository does not weaken this rule.
 
 ## Current Phase
 
-Phase 1 is complete: tooling, repository boundaries, SOPS policy, and guarded
-operator commands are established. It did not generate a Talos identity or
-contact the cluster. Phase 2 will define the fresh Talos configuration. See
-[`docs/phase-1-repository.md`](docs/phase-1-repository.md) for the evidence.
+Phase 2 is complete: the fresh identity, declarative Talhelper configuration,
+Secure Boot schematic, disk policy, rendering workflow, and strict validation
+are established. No cluster API was contacted. Phase 3 is the physical NVMe
+replacement and installation boundary. See
+[`docs/phase-2-talos.md`](docs/phase-2-talos.md) for the evidence.

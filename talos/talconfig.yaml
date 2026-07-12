@@ -1,0 +1,76 @@
+---
+clusterName: nuc-cluster
+talosVersion: v1.13.6
+kubernetesVersion: v1.35.6
+endpoint: https://192.168.90.20:6443
+allowSchedulingOnControlPlanes: true
+cniConfig:
+  name: none
+patches:
+  - "@./patches/machine.yaml"
+nodes:
+  - hostname: nuc1
+    ipAddress: 192.168.90.10
+    controlPlane: true
+    installDisk: /dev/nvme0n1
+  - hostname: nuc2
+    ipAddress: 192.168.90.11
+    controlPlane: true
+    installDisk: /dev/nvme0n1
+  - hostname: nuc3
+    ipAddress: 192.168.90.12
+    controlPlane: true
+    installDisk: /dev/nvme0n1
+controlPlane:
+  filenameTmpl: "{{.Hostname}}.yaml"
+  machineSpec:
+    mode: metal
+    arch: amd64
+    secureboot: true
+    bootMethod: iso
+  schematic:
+    customization:
+      systemExtensions:
+        officialExtensions:
+          - siderolabs/intel-ucode
+          - siderolabs/i915
+          - siderolabs/iscsi-tools
+          - siderolabs/util-linux-tools
+  networkInterfaces:
+    - interface: enp88s0
+      dhcp: true
+      vip:
+        ip: 192.168.90.20
+  volumes:
+    - name: STATE
+      encryption:
+        provider: luks2
+        keys:
+          - slot: 0
+            tpm:
+              options:
+                pcrs:
+                  - 7
+              checkSecurebootStatusOnEnroll: true
+    - name: EPHEMERAL
+      provisioning:
+        maxSize: 150GiB
+      encryption:
+        provider: luks2
+        keys:
+          - slot: 0
+            tpm:
+              options:
+                pcrs:
+                  - 7
+              checkSecurebootStatusOnEnroll: true
+            lockToState: true
+  userVolumes:
+    - name: longhorn
+      provisioning:
+        diskSelector:
+          match: system_disk
+        minSize: 700GiB
+        grow: true
+      filesystem:
+        type: xfs

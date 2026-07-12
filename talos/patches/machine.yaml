@@ -1,0 +1,14 @@
+---
+machine:
+  install:
+    wipe: true
+  features:
+    kubePrism:
+      enabled: true
+      port: 7445
+    hostDNS:
+      enabled: true
+      forwardKubeDNSToHost: true
+cluster:
+  proxy:
+    disabled: true

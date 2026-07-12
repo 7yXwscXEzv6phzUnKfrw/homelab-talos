@@ -40,8 +40,15 @@ rollback media.
 
 ## Image Factory
 
-These values belong only to the manual `v1.13.2` installation. Phase 2 will
-create and record a new schematic for the rebuild.
+The Phase 2 rebuild uses one schematic for both Secure Boot artifacts:
+
+| Field | Value |
+|---|---|
+| Schematic ID | a41f967fabc5d1edf3efe2fa2833662218a338b7569216cbfde1d324a4963d79 |
+| SecureBoot ISO | https://factory.talos.dev/image/a41f967fabc5d1edf3efe2fa2833662218a338b7569216cbfde1d324a4963d79/v1.13.6/metal-amd64-secureboot.iso |
+| SecureBoot installer image | factory.talos.dev/metal-installer-secureboot/a41f967fabc5d1edf3efe2fa2833662218a338b7569216cbfde1d324a4963d79:v1.13.6 |
+
+The values below belong only to the manual `v1.13.2` installation.
 
 | Field | Value |
 |---|---|
@@ -52,6 +59,7 @@ create and record a new schematic for the rebuild.
 ## Extensions
 
 - siderolabs/intel-ucode
+- siderolabs/i915
 - siderolabs/iscsi-tools
 - siderolabs/util-linux-tools
 

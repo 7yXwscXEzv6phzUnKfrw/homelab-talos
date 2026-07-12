@@ -37,10 +37,17 @@ its older independent identity.
 
 ## Recreate Generated State
 
-Phase 2 will define the exact Talhelper render command. Rendered machine configs,
-talosconfig, and kubeconfig belong under ignored paths and can be recreated from
-Git plus the repository age identity. Never recover them by committing plaintext
-copies.
+Rendered machine configs and talosconfig can be recreated from Git plus the
+repository age identity:
+
+```bash
+mise exec -- just talos-generate
+```
+
+The recipe verifies the age identity, renders `clusterconfig/nuc1.yaml` through
+`nuc3.yaml` and `clusterconfig/talosconfig`, then performs strict metal-mode and
+policy validation. These outputs and the later kubeconfig remain ignored. Never
+recover them by committing plaintext copies.
 
 Cluster rebuild, etcd recovery, Cilium bootstrap, and Flux recovery procedures
 will be added when those components are implemented and tested.

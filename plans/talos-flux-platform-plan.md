@@ -383,12 +383,17 @@ parallelism remains one to preserve etcd quorum and simplify fault diagnosis.
 ## Target Repository Structure
 
 ```text
+.just/
+  repository.just
+  bootstrap.just
 talos/
+  mod.just
   talconfig.yaml
   talsecret.sops.yaml
   patches/
 clusterconfig/                         # generated and ignored
 kubernetes/
+  mod.just
   flux/clusters/prod/
   apps/kube-system/cilium/
   apps/networking/metallb/
@@ -414,31 +419,87 @@ and actual duplication needs to be removed.
 - Mise pins and installs repository-local CLI versions and defines the non-secret
   environment variables required by those tools. Mise tasks are not used as the
   operational command interface.
-- Just is the sole task runner. The `.justfile` exposes generation, validation,
+- Just is the sole task runner. The root `.justfile` is a small parent dispatcher
+  that declares grouped modules; domain modules expose generation, validation,
   installation, bootstrap, and verification workflows using the tools provided
   by Mise.
-- `just tools` is a convenience wrapper around `mise install`.
+- Just modules, not textual imports, provide command namespaces and keep module
+  variables, settings, working directories, and recipes within their operational
+  domain.
+- `just repo tools` is a convenience wrapper around `mise install`.
 - Secrets and machine-specific values are not stored in `.mise.toml`. Recipes
   require them from the operator environment or password manager and fail when
   they are absent.
 
-The `.justfile` will expose these operator workflows:
+Module ownership is:
+
+- `repo`, sourced from `.just/repository.just`: workstation tools, version
+  reporting, SOPS identity checks, repository policy, secret scanning, and the
+  aggregate non-mutating verification workflow.
+- `talos`, sourced from `talos/mod.just`: Talhelper source validation, rendering,
+  rendered-config validation, per-node configuration, image operations, and
+  later Talos lifecycle commands.
+- `bootstrap`, sourced from `.just/bootstrap.just`: explicitly ordered workflows
+  that cross Talos and Kubernetes boundaries, including etcd, Cilium, and Flux
+  bootstrap. It composes domain commands but does not own their low-level logic.
+- `kube`, sourced from `kubernetes/mod.just`: Kubernetes rendering,
+  reconciliation, diagnostics, and day-two operations after those workflows
+  exist.
+
+The namespaced operator interface is:
 
 ```text
-just tools
-just secrets
-just talos-generate
-just talos-validate
-just talos-apply <node>
-just talos-bootstrap
-just cilium-bootstrap
-just flux-bootstrap
-just verify
+just repo tools
+just repo versions
+just repo secrets
+just repo verify
+just repo secret-scan
+just talos source-validate
+just talos generate
+just talos validate
+just talos apply <node>
+just bootstrap talos
+just bootstrap cilium
+just bootstrap flux
 ```
+
+Running `just` lists the modules, and running a module without a recipe, such as
+`just talos`, lists that module's available commands. The module files repeat the
+Just settings they require because settings are module-local. Paths colocated
+with a module are resolved relative to that module; repository-wide paths use the
+root Justfile directory explicitly.
+
+Flat compatibility commands and aliases are intentionally not retained. This is
+an early single-operator rebuild, so one documented namespaced interface is less
+ambiguous than maintaining two command vocabularies. Documentation and phase
+evidence must be updated atomically with the module migration.
 
 Generated `clusterconfig`, talosconfig, kubeconfig, decrypted secrets, and age
 private keys must remain ignored. The command recipes must fail when prerequisites
 or required environment variables are missing rather than silently using defaults.
+
+### Just Module Migration Gate
+
+Complete this repository-only migration before Phase 3 enables any machine
+configuration command:
+
+1. Reduce the root `.justfile` to shared settings and grouped `repo`, `talos`,
+   `bootstrap`, and `kube` module declarations. Do not add compatibility aliases.
+2. Move the existing tool, secret, policy, and scanning recipes into
+   `.just/repository.just`.
+3. Move Talhelper generation and validation into `talos/mod.just`, taking
+   advantage of its Talos-relative working directory without weakening any
+   prerequisite or rendered-policy assertion.
+4. Move the disabled etcd, Cilium, and Flux bootstrap boundaries into
+   `.just/bootstrap.just`; keep them disabled until their owning implementation
+   phases.
+5. Create `kubernetes/mod.just` as the namespace for later Kubernetes operations;
+   do not add speculative recipes merely to populate the module.
+6. Update the root README, Talos README, SOPS and recovery documentation, and
+   phase evidence to use only the namespaced commands.
+7. Verify `just`, each module listing, `just repo verify`, `just talos validate`,
+   formatting with `just --fmt --check`, failure behavior without the SOPS
+   identity, and the continued disablement of future cluster-changing workflows.
 
 ## Phase 0: Preserve and Preflight
 
@@ -512,6 +573,11 @@ no cluster-changing command ran.
   identical machine configs after the Talhelper sources exist.
 
 ## Phase 2: Define Talos with Talhelper
+
+Implementation evidence is recorded in
+[`docs/phase-2-talos.md`](../docs/phase-2-talos.md). Phase 2 completed on
+2026-07-12. The fresh Talos identity is encrypted, all three machine configs
+render reproducibly into ignored output, and strict metal-mode validation passes.
 
 ### Machine Configuration
 

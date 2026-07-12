@@ -1,12 +1,12 @@
 # Talos Source Boundary
 
-This directory will become the declarative source for the NUC Talos cluster in
-Phase 2. Until that phase is implemented, the Talos generation and validation
-recipes intentionally fail.
+This directory is the declarative source for the NUC Talos cluster. Phase 2
+established the Talhelper inputs and enabled local generation and validation;
+applying a config remains disabled until Phase 3.
 
 ## Source and Generated State
 
-Phase 2 will add these trackable sources:
+The trackable sources are:
 
 - `talconfig.yaml` for cluster topology, versions, nodes, and patch references
 - `talsecret.sops.yaml` for the fully encrypted fresh Talos identity
@@ -22,7 +22,7 @@ configs, or cluster identity into this directory.
 
 ## Phase 2 Workflow
 
-After Phase 2 enables its recipes, the developer workflow will be:
+The developer workflow is:
 
 ```bash
 just secrets
@@ -34,6 +34,12 @@ just verify
 Generation is local and non-mutating. Applying a rendered config is a separate
 Phase 3 operation through `just talos-apply <node>` and must not be replaced with
 an undocumented raw `talosctl apply-config` command.
+
+`just talos-generate` first verifies the loaded repository age identity, then
+decrypts the Talos bundle only inside the Talhelper process. It replaces the
+ignored `clusterconfig/` output and runs `just talos-validate`. Validation checks
+all three configs in strict metal mode and asserts the Phase 2 endpoint, network,
+Secure Boot installer, CNI, kube-proxy, encryption, and volume decisions.
 
 See the root [`README.md`](../README.md) for workstation setup and the canonical
 [`plans/talos-flux-platform-plan.md`](../plans/talos-flux-platform-plan.md) for

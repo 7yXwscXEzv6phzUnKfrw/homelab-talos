@@ -35,6 +35,12 @@ match the first rule in `.sops.yaml`.
 - Plaintext secrets, decrypted files, kubeconfigs, talosconfigs, and private age
   identities must never be committed.
 
-Phase 2 will document Talhelper secret generation and encryption after the new
-Talos source is defined. Flux decryption configuration arrives with Flux
-bootstrap, not during Phase 1.
+The Talos identity was generated once with `talhelper gensecret` under an owner-
+only umask and encrypted immediately to `talos/talsecret.sops.yaml`. The plaintext
+temporary file was removed after the initial render. Do not regenerate this file:
+doing so creates a different cluster identity.
+
+`just talos-generate` requires `SOPS_AGE_KEY` or `SOPS_AGE_KEY_FILE`, verifies the
+loaded identity with `just secrets`, and lets Talhelper decrypt the tracked bundle
+while rendering ignored output. Flux decryption configuration arrives with Flux
+bootstrap, not during Phase 2.
