@@ -1,5 +1,10 @@
 # NUC Talos Cluster
 
+This document records the hardware and network facts proven by the manual
+installation. The rebuild target is Talos `v1.13.6` with Kubernetes `v1.35.6`;
+the `v1.13.2` values below describe the superseded proof of concept and its
+rollback media.
+
 ## Cluster
 
 | Field | Value |
@@ -9,7 +14,9 @@
 | Network | 192.168.90.0/24 |
 | Gateway | 192.168.90.1 |
 | DNS | 192.168.90.2 |
-| Talos version | v1.13.2 |
+| Manual Talos version | v1.13.2 |
+| Rebuild Talos version | v1.13.6 |
+| Rebuild Kubernetes version | v1.35.6 |
 | Platform | metal |
 | Architecture | amd64 |
 | Secure Boot | Enabled |
@@ -32,6 +39,9 @@
 | nuc3 | 192.168.90.12 | controlplane | /dev/nvme0n1 | enp88s0 | 48:21:0b:35:01:0c |
 
 ## Image Factory
+
+These values belong only to the manual `v1.13.2` installation. Phase 2 will
+create and record a new schematic for the rebuild.
 
 | Field | Value |
 |---|---|
@@ -66,9 +76,11 @@ Expected result:
 SECUREBOOT   true
 ```
 
-## Generated Files
+## Legacy Generated Files
 
-Generated Talos files under `clusters/nuc/talos/generated/` are not committed because they contain secrets, certificates, and tokens.
+Generated Talos files under `clusters/nuc/talos/generated/` are not committed
+because they contain secrets, certificates, and tokens. They are not inputs to
+the fresh rebuild.
 
 Do not commit these unless encrypted with SOPS:
 
@@ -91,9 +103,10 @@ Manual phase:
 4. Apply per-node Talos machine config
 5. Verify NVMe boot, Secure Boot, hostname, services, and partitions
 
-Automated phase:
+Later automated phases:
 
-1. Bootstrap Talos with Ansible
-2. Fetch kubeconfig
-3. Bootstrap Flux
-4. Let Flux manage Kubernetes resources
+1. Render and validate Talos with Talhelper
+2. Bootstrap Talos with guarded `talosctl` commands
+3. Fetch kubeconfig
+4. Bootstrap Flux
+5. Let Flux manage Kubernetes resources

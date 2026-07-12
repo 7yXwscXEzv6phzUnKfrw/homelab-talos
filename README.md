@@ -1,0 +1,164 @@
+# Homelab Talos Platform
+
+This private repository is the source of truth for the three-node NUC Talos
+cluster and its Flux-managed Kubernetes platform. The cluster is being rebuilt
+from scratch on new NVMe drives; the old manual Talos layout remains only as a
+reference and rollback record.
+
+The canonical design and rollout order are in
+[`plans/talos-flux-platform-plan.md`](plans/talos-flux-platform-plan.md). Start
+there before enabling a new phase. Physical preflight evidence is in
+[`docs/phase-0-preflight.md`](docs/phase-0-preflight.md).
+
+## Prerequisites
+
+- macOS with Homebrew and Git
+- Access to this private repository
+- The password-manager item `homelab-talos SOPS age key` when working with secrets
+- Network access to GitHub and upstream release registries when installing tools
+
+No Kubernetes, Talos, Helm, Flux, or SOPS CLI should be installed manually for
+this repository. Mise installs the versions declared in `.mise.toml` and verified
+by `mise.lock`.
+
+## First Clone
+
+Install mise, review and trust the repository configuration, install the locked
+tools, and validate the checkout:
+
+```bash
+brew install mise
+mise trust
+mise install --locked
+mise exec -- just verify
+```
+
+`mise install --locked` is required on the first clone because `just` is itself a
+mise-managed tool. After that bootstrap, use Just for repository workflows.
+
+## Shell Setup
+
+Choose one command style for each shell session.
+
+Activate mise, then call Just directly:
+
+```bash
+eval "$(mise activate zsh)"
+just verify
+```
+
+Or leave the shell unchanged and execute Just inside the mise environment:
+
+```bash
+mise exec -- just verify
+```
+
+Run `just` or `mise exec -- just` to list all available workflows.
+
+## Mise Versus Just
+
+Mise owns tool installation, exact version selection, and the execution
+environment. Just is the sole operational task runner; mise tasks are not used.
+
+| Action | Command |
+|---|---|
+| Bootstrap tools on a new clone | `mise install --locked` |
+| Refresh already-bootstrapped tools | `just tools` |
+| Inspect active tool versions | `just versions` or `mise ls --current` |
+| Diagnose mise itself | `mise doctor` |
+| Run a repository workflow | `just <recipe>` |
+| Run an ad hoc pinned CLI for investigation | `mise exec -- <tool> ...` |
+
+Prefer a Just recipe whenever one exists. Direct `talosctl`, `kubectl`, `helm`,
+`flux`, or `sops` commands are for investigation, recovery documentation, or
+developing a new guarded recipe.
+
+## Operator Commands
+
+| Recipe | Purpose | Availability |
+|---|---|---|
+| `just tools` | Install locked tools and print versions | Available |
+| `just versions` | Print the active tool versions | Available |
+| `just secrets` | Confirm the loaded age identity matches this repository | Available |
+| `just verify` | Check policy, ignore rules, and tracked content for secrets | Available |
+| `just secret-scan` | Run the repository secret scans directly | Available |
+| `just talos-generate` | Render machine configs with Talhelper | Enabled in Phase 2 |
+| `just talos-validate` | Validate rendered Talos configs | Enabled in Phase 2 |
+| `just talos-apply <node>` | Apply one node's machine config | Enabled in Phase 3 |
+| `just talos-bootstrap` | Bootstrap the initial etcd member | Enabled in Phase 4 |
+| `just cilium-bootstrap` | Install the bootstrap Cilium release | Enabled in Phase 5 |
+| `just flux-bootstrap` | Bootstrap Flux against this repository | Enabled in Phase 6 |
+
+Recipes for future phases currently fail with a phase-prerequisite message. That
+failure is intentional and prevents a documented interface from becoming an
+accidental cluster mutation.
+
+## Secret Access
+
+Retrieve `homelab-talos SOPS age key` from the password manager and expose it to
+the current shell. Do not create the key file inside this repository.
+
+For a short session:
+
+```bash
+export SOPS_AGE_KEY='AGE-SECRET-KEY-...'
+just secrets
+```
+
+For repeated operations, use an owner-readable file outside the repository:
+
+```bash
+export SOPS_AGE_KEY_FILE=/secure/path/homelab-talos-age.txt
+just secrets
+```
+
+`just secrets` derives the public recipient and rejects the wrong identity. See
+[`docs/sops.md`](docs/sops.md) for encryption policy and
+[`docs/recovery.md`](docs/recovery.md) for restoring access.
+
+## Normal Change Workflow
+
+1. Confirm the current phase and its prerequisites in the canonical plan.
+2. Run `just tools` after pulling a change to `.mise.toml` or `mise.lock`.
+3. Load the SOPS identity only when the change requires encrypted material.
+4. Edit declarative source files, never generated output.
+5. Run the phase-specific generation or validation recipe when it is available.
+6. Run `just verify` before reviewing or committing the change.
+7. Inspect `git status` and confirm no generated config, decrypted secret,
+   kubeconfig, talosconfig, or private key is trackable.
+
+Do not bypass a disabled recipe with a raw cluster-changing command. Enable and
+test the guarded recipe as part of the phase that owns that operation.
+
+## Updating Tool Versions
+
+Tool upgrades are deliberate repository changes:
+
+1. Edit the version in `.mise.toml`.
+2. Run `mise install` to install the new version.
+3. Run `mise lock` to refresh cross-platform URLs, checksums, and provenance.
+4. Run `just versions` and `just verify`.
+5. Review and commit `.mise.toml` and `mise.lock` together.
+
+Use `mise install --locked` when consuming the repository. Use unlocked
+`mise install` only while intentionally changing the tool definition and lockfile.
+
+## Repository Boundaries
+
+- `talos/` holds declarative Talhelper inputs beginning in Phase 2.
+- `clusterconfig/` holds ignored rendered Talos machine configs.
+- `kubernetes/` holds Flux sources beginning in Phase 5.
+- `clusters/nuc/talos/` is the superseded manual layout and is not a rebuild input.
+- `docs/` holds inventory, recovery, secret handling, and phase evidence.
+- `plans/` holds architectural decisions and phased acceptance gates.
+
+Generated configs, kubeconfigs, talosconfigs, decrypted secrets, Helm output,
+support bundles, and age private identities must remain outside Git. The private
+repository does not weaken this rule.
+
+## Current Phase
+
+Phase 1 is complete: tooling, repository boundaries, SOPS policy, and guarded
+operator commands are established. It did not generate a Talos identity or
+contact the cluster. Phase 2 will define the fresh Talos configuration. See
+[`docs/phase-1-repository.md`](docs/phase-1-repository.md) for the evidence.

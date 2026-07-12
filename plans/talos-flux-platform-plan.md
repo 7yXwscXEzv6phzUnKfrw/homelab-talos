@@ -409,6 +409,19 @@ and actual duplication needs to be removed.
 
 ## Command Interface
 
+### Tooling Responsibilities
+
+- Mise pins and installs repository-local CLI versions and defines the non-secret
+  environment variables required by those tools. Mise tasks are not used as the
+  operational command interface.
+- Just is the sole task runner. The `.justfile` exposes generation, validation,
+  installation, bootstrap, and verification workflows using the tools provided
+  by Mise.
+- `just tools` is a convenience wrapper around `mise install`.
+- Secrets and machine-specific values are not stored in `.mise.toml`. Recipes
+  require them from the operator environment or password manager and fail when
+  they are absent.
+
 The `.justfile` will expose these operator workflows:
 
 ```text
@@ -428,6 +441,11 @@ private keys must remain ignored. The command recipes must fail when prerequisit
 or required environment variables are missing rather than silently using defaults.
 
 ## Phase 0: Preserve and Preflight
+
+Implementation evidence and the remaining physical checklist are maintained in
+[`docs/phase-0-preflight.md`](../docs/phase-0-preflight.md). Phase 0 is in progress;
+the live inventory and rollback tag are complete, while `nuc1`, BIOS, new-drive,
+new-config, and USB checks remain open.
 
 ### Objectives
 
@@ -460,6 +478,12 @@ or required environment variables are missing rather than silently using default
 
 ## Phase 1: Rebuild the Repository
 
+Implementation evidence is recorded in
+[`docs/phase-1-repository.md`](../docs/phase-1-repository.md). Phase 1 completed on
+2026-07-12. Mise provides the locked CLI environment, Just provides the guarded
+operator interface, the new repository age identity is stored outside Git, and
+no cluster-changing command ran.
+
 ### Work
 
 1. Replace the raw `talosctl gen config` layout with the target structure above.
@@ -482,7 +506,10 @@ or required environment variables are missing rather than silently using default
 - `mise install` provides the pinned tools.
 - Secret scanning finds no age private key or plaintext Talos/Kubernetes secret.
 - Generated paths are ignored while declarative source files remain trackable.
-- A fresh clone plus the password-manager key can render the same configs.
+- A fresh clone can install the locked tools and validate that a loaded
+  password-manager identity matches the committed public recipient.
+- Phase 2 will prove that a fresh clone plus the password-manager identity renders
+  identical machine configs after the Talhelper sources exist.
 
 ## Phase 2: Define Talos with Talhelper
 

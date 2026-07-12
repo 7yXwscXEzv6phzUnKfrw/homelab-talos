@@ -1,86 +1,40 @@
-# SOPS for Talos Secrets
+# SOPS Secret Handling
 
-This repo uses a dedicated SOPS age identity for Talos bootstrap secrets.
-Only the public age recipient is committed in `.sops.yaml`; the private age key
-must stay outside Git.
+This repository uses a dedicated age identity for the fresh Talos and Flux
+platform. Only its public recipient is committed. The private identity stays in
+the password-manager item `homelab-talos SOPS age key`.
 
-## Store the Private Key
+The legacy encrypted secret under `clusters/nuc/talos/` retains its old recipient
+and identity. It is not an input to the rebuild.
 
-Store the private key in a password manager as a secure note or password item named
-`homelab-talos SOPS age key`.
+## Load the Repository Identity
 
-The private key file should contain the age identity, not just the public
-recipient. A valid key file includes a line beginning with:
-
-```text
-AGE-SECRET-KEY-
-```
-
-## Load the Key Locally
-
-If copying the key from a password manager, paste it into `SOPS_AGE_KEY` for the
-current shell:
+Load the private identity for one shell:
 
 ```bash
 export SOPS_AGE_KEY='AGE-SECRET-KEY-...'
+mise exec -- just secrets
 ```
 
-Alternatively, use a temporary file when decrypting or regenerating Talos configs:
+Alternatively, point SOPS at an owner-readable file outside the repository:
 
 ```bash
-export SOPS_AGE_KEY_FILE=/path/to/talos-age-keys.txt
+export SOPS_AGE_KEY_FILE=/secure/path/homelab-talos-age.txt
+mise exec -- just secrets
 ```
 
-Alternatively, place the key in the default SOPS age location:
+The check derives the public recipient and rejects an identity that does not
+match the first rule in `.sops.yaml`.
 
-```bash
-mkdir -p ~/.config/sops/age
-chmod 700 ~/.config/sops/age
-cp /path/to/talos-age-keys.txt ~/.config/sops/age/keys.txt
-chmod 600 ~/.config/sops/age/keys.txt
-```
+## Encryption Policy
 
-## Encrypt Talos Secrets
+- `talos/talsecret.sops.yaml` is encrypted as a complete document because every
+  field is cluster identity material.
+- `kubernetes/**/*.sops.yaml` encrypts only `data` and `stringData`, leaving
+  Secret metadata reviewable.
+- Plaintext secrets, decrypted files, kubeconfigs, talosconfigs, and private age
+  identities must never be committed.
 
-Derive secrets from the current manually installed controlplane config, encrypt
-them, and remove the plaintext intermediate:
-
-```bash
-talosctl gen secrets \
-  --from-controlplane-config clusters/nuc/talos/generated/controlplane.yaml \
-  --output-file clusters/nuc/talos/secrets/talos-secrets.yaml
-
-sops --encrypt \
-  --filename-override clusters/nuc/talos/secrets/talos-secrets.sops.yaml \
-  --output clusters/nuc/talos/secrets/talos-secrets.sops.yaml \
-  clusters/nuc/talos/secrets/talos-secrets.yaml
-
-rm clusters/nuc/talos/secrets/talos-secrets.yaml
-```
-
-## Decrypt for Regeneration
-
-Decrypt only to a local temporary path:
-
-```bash
-SOPS_AGE_KEY='AGE-SECRET-KEY-...' \
-  sops -d clusters/nuc/talos/secrets/talos-secrets.sops.yaml > /tmp/talos-secrets.yaml
-```
-
-Or use a key file:
-
-```bash
-SOPS_AGE_KEY_FILE=/path/to/talos-age-keys.txt \
-  sops -d clusters/nuc/talos/secrets/talos-secrets.sops.yaml > /tmp/talos-secrets.yaml
-```
-
-Regenerate Talos configs with the locally installed `talosctl v1.13.2` flag:
-
-```bash
-talosctl gen config nuc-cluster https://192.168.90.20:6443 \
-  --with-secrets /tmp/talos-secrets.yaml \
-  --output clusters/nuc/talos/generated
-```
-
-Rendered Talos configs, kubeconfigs, talosconfigs, plaintext Talos secrets, and
-age private keys must not be committed.
+Phase 2 will document Talhelper secret generation and encryption after the new
+Talos source is defined. Flux decryption configuration arrives with Flux
+bootstrap, not during Phase 1.

@@ -1,6 +1,7 @@
 # Talos generated configs and secrets
 clusters/**/talos/generated/
 clusters/**/talos/_out/
+/clusterconfig/
 
 clusters/**/talos/secrets/*.yaml
 !clusters/**/talos/secrets/*.sops.yaml
@@ -11,6 +12,17 @@ clusters/**/talos/secrets/*.yaml
 **/worker.yaml
 **/controlplane-final.yaml
 **/nuc*-controlplane.yaml
+
+# Local decrypted material and generated output
+/.secrets/
+/.tmp/
+/.cache/
+/.mise/
+/.mise.local.toml
+/helm-output/
+/support-bundles/
+*.dec.yaml
+*.decrypted.yaml
 
 # macOS
 .DS_Store
