@@ -488,9 +488,12 @@ flux-canary-test: flux-verify
       exit 1
     }
 
-    old_uid="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get secret flux-canary \
-      --selector app.kubernetes.io/component=reconciliation-canary \
-      --output jsonpath='{.items[0].metadata.uid}')"
+    canary_json="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get secret flux-canary --output json)"
+    [[ "$(yq -r '.metadata.labels."app.kubernetes.io/component"' - <<<"$canary_json")" == 'reconciliation-canary' ]] || {
+      echo 'Refusing canary test: flux-system/flux-canary does not carry the required safety label.' >&2
+      exit 1
+    }
+    old_uid="$(yq -r '.metadata.uid' - <<<"$canary_json")"
     [[ -n "$old_uid" ]]
     kubectl --kubeconfig "$kubeconfig" --namespace flux-system delete secret flux-canary \
       --wait=true
