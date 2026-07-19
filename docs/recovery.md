@@ -62,6 +62,16 @@ reconciliation. The canonical source endpoint is
 `ssh://git@ssh.github.com:443/7yXwscXEzv6phzUnKfrw/homelab-talos`; GitHub's SSH
 port 443 avoids environments that block or time out port 22.
 
+If the URL already uses port 443 but source-controller reports
+`knownhosts: key is unknown`, preserve the deploy key and repair only its host
+trust through the guarded workflow:
+
+```bash
+export FLUX_SSH_KNOWN_HOSTS_CONFIRM='repair:flux-system:known-hosts:ssh.github.com:443'
+mise exec -- just bootstrap flux-ssh-known-hosts
+unset FLUX_SSH_KNOWN_HOSTS_CONFIRM
+```
+
 If the deploy key is deleted from GitHub or its cluster Secret is lost, load the
 repository-scoped fine-grained PAT, run the read-only preflight, and rerun the
 guarded bootstrap workflow. Its `--reconcile` behavior restores the canonical

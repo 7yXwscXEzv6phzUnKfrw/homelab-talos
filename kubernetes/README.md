@@ -80,7 +80,8 @@ Flux workflows are also Just-managed:
 | `just kube flux-preflight` | Check published Git state, live Cilium/Talos/etcd health, and Kubernetes compatibility |
 | `just bootstrap flux` | Bootstrap Flux `2.9.2` with a read-only GitHub SSH deploy key |
 | `just bootstrap flux-sops` | Install or verify the matching `flux-system/sops-age` identity |
-| `just bootstrap flux-adopt-cilium` | Transfer Cilium ownership without a pod rollout and stage the Git unsuspend |
+| `just bootstrap flux-ssh-known-hosts` | Preserve the deploy key while repairing GitHub port-443 host trust |
+| `just bootstrap flux-adopt-cilium` | Transfer Cilium ownership with guarded workload health and stage the Git unsuspend |
 | `just kube flux-status` | Print read-only controllers, sources, Kustomizations, HelmReleases, and pods |
 | `just kube flux-verify` | Verify source auth, SOPS, canary, Cilium ownership, Talos, and etcd |
 | `just kube flux-canary-test` | Guard deletion and Flux recreation of the noncritical canary Secret |

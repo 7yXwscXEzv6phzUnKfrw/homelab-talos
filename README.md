@@ -125,7 +125,8 @@ available for focused developer validation.
 | `just kube flux-preflight` | Verify published Git, Cilium/Talos/etcd health, and Kubernetes compatibility | Implemented in Phase 6; read-only |
 | `just bootstrap flux` | Bootstrap Flux `2.9.2` and a read-only GitHub SSH deploy key | Implemented in Phase 6; mutating after confirmation |
 | `just bootstrap flux-sops` | Create or verify the matching in-cluster SOPS identity | Implemented in Phase 6; mutating after confirmation |
-| `just bootstrap flux-adopt-cilium` | Adopt Cilium without a rollout and stage the permanent unsuspend | Implemented in Phase 6; mutating after confirmation |
+| `just bootstrap flux-ssh-known-hosts` | Preserve the deploy key and repair GitHub port-443 host trust | Phase 6 recovery; mutating after confirmation |
+| `just bootstrap flux-adopt-cilium` | Adopt Cilium with guarded workload health and stage the permanent unsuspend | Implemented in Phase 6; mutating after confirmation |
 | `just kube flux-status` | Print Flux controllers and reconciliation state | Implemented in Phase 6; read-only |
 | `just kube flux-verify` | Verify Flux source auth, SOPS, canary, Cilium, Talos, and etcd | Implemented in Phase 6; read-only |
 | `just kube flux-canary-test` | Prove Flux recreates the guarded noncritical canary Secret | Implemented in Phase 6; mutating after confirmation |

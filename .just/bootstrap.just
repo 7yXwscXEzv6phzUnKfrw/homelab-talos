@@ -549,6 +549,65 @@ flux:
     echo 'Flux 2.9.2 bootstrap passed: four controllers are healthy and Git uses the matching read-only SSH deploy key.'
     echo 'The GitHub PAT was not stored in the cluster; unset GITHUB_TOKEN after the bootstrap session.'
 
+# Preserve the Flux deploy key while replacing a stale SSH known_hosts entry for GitHub port 443.
+flux-ssh-known-hosts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    expected_url='ssh://git@ssh.github.com:443/7yXwscXEzv6phzUnKfrw/homelab-talos'
+    expected_fingerprint='SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM'
+    expected_confirmation='repair:flux-system:known-hosts:ssh.github.com:443'
+    key_file="$(mktemp /tmp/homelab-talos-flux-identity.XXXXXX)"
+    secret_file="$(mktemp /tmp/homelab-talos-flux-secret.XXXXXX)"
+    known_hosts_file="$(mktemp /tmp/homelab-talos-flux-known-hosts.XXXXXX)"
+    trap 'rm -f -- "$key_file" "$secret_file" "$known_hosts_file"' EXIT
+    chmod 600 "$key_file" "$secret_file" "$known_hosts_file"
+
+    source_json="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get gitrepository flux-system --output json)"
+    [[ "$(yq -r '.spec.url' - <<<"$source_json")" == "$expected_url" ]] || {
+      echo 'Refusing known_hosts repair: the GitRepository does not use the expected port-443 URL.' >&2
+      exit 1
+    }
+    source_secret="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get secret flux-system --output json)"
+    source_secret_keys="$(yq -r '.data | keys | .[]' - <<<"$source_secret" | sort)"
+    [[ "$source_secret_keys" == $'identity\nidentity.pub\nknown_hosts' ]]
+    existing_public_key="$(yq -r '.data."identity.pub"' - <<<"$source_secret" | base64 --decode | awk 'NF >= 2 {print $1 " " $2; exit}')"
+    yq -r '.data.identity' - <<<"$source_secret" | base64 --decode >"$key_file"
+
+    flux create secret git flux-system \
+      --namespace flux-system \
+      --url "$expected_url" \
+      --private-key-file "$key_file" \
+      --export >"$secret_file"
+    generated_public_key="$(yq -r '.stringData."identity.pub"' "$secret_file" | awk 'NF >= 2 {print $1 " " $2; exit}')"
+    [[ "$generated_public_key" == "$existing_public_key" ]] || {
+      echo 'Refusing known_hosts repair: generated credentials do not preserve the deploy key.' >&2
+      exit 1
+    }
+    yq -r '.stringData.known_hosts' "$secret_file" >"$known_hosts_file"
+    rg -q '^\[ssh\.github\.com\]:443 ' "$known_hosts_file"
+    ssh-keygen -lf "$known_hosts_file" -E sha256 | rg -Fq "$expected_fingerprint" || {
+      echo 'Refusing known_hosts repair: GitHub ECDSA fingerprint did not match the published value.' >&2
+      exit 1
+    }
+
+    [[ "${FLUX_SSH_KNOWN_HOSTS_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to replace flux-system/flux-system known_hosts.' >&2
+      echo "Set FLUX_SSH_KNOWN_HOSTS_CONFIRM='$expected_confirmation' after reviewing the target." >&2
+      exit 1
+    }
+
+    kubectl --kubeconfig "$kubeconfig" apply --filename "$secret_file"
+    flux reconcile source git flux-system \
+      --namespace flux-system \
+      --kubeconfig "$kubeconfig" \
+      --timeout 5m
+    source_json="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get gitrepository flux-system --output json)"
+    [[ "$(yq -r '[.status.conditions[] | select(.type == "Ready") | .status][0]' - <<<"$source_json")" == 'True' ]]
+    [[ "$(yq -r '.spec.url' - <<<"$source_json")" == "$expected_url" ]]
+    echo 'Flux known_hosts repair passed: the deploy key is unchanged and GitHub SSH port 443 is Ready.'
+
 # Create the Flux SOPS decryption Secret from the validated workstation identity.
 flux-sops:
     #!/usr/bin/env bash

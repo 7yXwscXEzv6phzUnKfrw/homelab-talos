@@ -88,6 +88,13 @@ The cluster Git source uses GitHub's SSH-over-HTTPS endpoint
 `ssh.github.com:443`. This retains the repository-scoped read-only deploy key
 while avoiding networks that time out outbound SSH port 22.
 
+When migrating an existing bootstrap Secret from port 22, the generated sync URL
+can change before its `known_hosts` entry does. The guarded
+`just bootstrap flux-ssh-known-hosts` workflow preserves and compares the deploy
+public key, obtains the port-443 host entry, verifies GitHub's published ECDSA
+fingerprint, updates only the source Secret, and requires the GitRepository to
+become Ready.
+
 The permanent encrypted canary depends on Cilium. It cannot become Ready until
 the SOPS key exists and Cilium adoption succeeds.
 
