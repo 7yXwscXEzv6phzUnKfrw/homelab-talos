@@ -102,7 +102,11 @@ available for focused developer validation.
 | `just talos validate` | Strictly validate rendered Talos configs and Phase 2 policy | Available |
 | `just talos source-validate` | Validate trackable Talhelper inputs without decrypting identity | Available; internal validation |
 | `just talos apply <node>` | Guard, dry-run, and apply one node's machine config | Enabled in Phase 3; destructive after confirmation |
-| `just bootstrap talos` | Bootstrap the initial etcd member | Disabled until Phase 4 |
+| `just bootstrap preflight` | Verify all three installed NUCs and refuse if etcd is initialized | Enabled in Phase 4; read-only |
+| `just bootstrap talos` | Guard and bootstrap etcd exactly once on nuc1 | Enabled in Phase 4; destructive after confirmation |
+| `just bootstrap status [node]` | Print read-only etcd membership, service, discovery, and recent logs; optionally select one node | Enabled in Phase 4; diagnostic |
+| `just bootstrap retry-join <node>` | Guard and reboot a failed nuc2/nuc3 etcd join without re-bootstrap | Enabled in Phase 4; mutating after confirmation |
+| `just bootstrap verify` | Verify etcd/Kubernetes/Talos and refresh ignored kubeconfig | Enabled in Phase 4 |
 | `just bootstrap cilium` | Install the bootstrap Cilium release | Disabled until Phase 5 |
 | `just bootstrap flux` | Bootstrap Flux against this repository | Disabled until Phase 6 |
 
@@ -182,9 +186,10 @@ repository does not weaken this rule.
 
 ## Current Phase
 
-Phase 2 is complete: the fresh identity, declarative Talhelper configuration,
-Secure Boot schematic, disk policy, rendering workflow, and strict validation
-are established. Phase 3 is in progress with guarded, one-node-at-a-time NVMe
-installation. See [`docs/phase-2-talos.md`](docs/phase-2-talos.md) for the render
-evidence and [`docs/phase-3-installation.md`](docs/phase-3-installation.md) for
-the physical installation evidence.
+Phase 4 is complete: etcd was bootstrapped exactly once through the guarded Just
+workflow, all three NUCs are voting members with no alarms, and the VIP-backed
+workstation kubeconfig works. Kubernetes nodes are intentionally `NotReady`
+until Phase 5 installs Cilium. See
+[`docs/phase-3-installation.md`](docs/phase-3-installation.md) for installation
+evidence and [`docs/phase-4-bootstrap.md`](docs/phase-4-bootstrap.md) for the
+bootstrap interface, recovery record, and acceptance evidence.
