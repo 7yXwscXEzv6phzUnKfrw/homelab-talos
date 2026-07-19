@@ -652,7 +652,7 @@ flux-adopt-cilium:
     just kube cilium-status
     kubectl --kubeconfig "$kubeconfig" --namespace kube-system get pods \
       --selector app.kubernetes.io/part-of=cilium \
-      --output json | yq -r '.items[] | [.metadata.name, .metadata.uid, ([.status.containerStatuses[].restartCount] | add)] | @tsv' | sort >"$before_pods"
+      --output json | yq -r '.items[] | .metadata.name + "\t" + .metadata.uid + "\t" + ([.status.containerStatuses[].restartCount] | join(","))' | sort >"$before_pods"
     old_revision="$(helm list --namespace kube-system --kubeconfig "$kubeconfig" --output json | yq -r '.[] | select(.name == "cilium") | .revision')"
 
     [[ "${FLUX_CILIUM_ADOPTION_CONFIRM:-}" == "$expected_confirmation" ]] || {
@@ -673,7 +673,7 @@ flux-adopt-cilium:
 
     kubectl --kubeconfig "$kubeconfig" --namespace kube-system get pods \
       --selector app.kubernetes.io/part-of=cilium \
-      --output json | yq -r '.items[] | [.metadata.name, .metadata.uid, ([.status.containerStatuses[].restartCount] | add)] | @tsv' | sort >"$after_pods"
+      --output json | yq -r '.items[] | .metadata.name + "\t" + .metadata.uid + "\t" + ([.status.containerStatuses[].restartCount] | join(","))' | sort >"$after_pods"
     cmp -s "$before_pods" "$after_pods" || {
       echo 'Cilium pod identity or restart counts changed during adoption.' >&2
       diff -u "$before_pods" "$after_pods" || true
