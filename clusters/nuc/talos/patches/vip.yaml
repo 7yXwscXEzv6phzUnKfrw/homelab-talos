@@ -1,7 +1,0 @@
-machine:
-  network:
-    interfaces:
-      - interface: enp88s0
-        dhcp: true
-        vip:
-          ip: 192.168.90.20

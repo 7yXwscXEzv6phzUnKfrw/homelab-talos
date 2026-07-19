@@ -10,6 +10,13 @@ The canonical design and rollout order are in
 there before enabling a new phase. Physical preflight evidence is in
 [`docs/phase-0-preflight.md`](docs/phase-0-preflight.md).
 
+## Physical KVM Note
+
+When connecting the KVM's HDMI and USB cables, `nuc1` and `nuc3` can use their
+rear USB-A ports normally. The rear USB-A port on `nuc2` does not provide working
+keyboard and mouse access. For `nuc2`, connect the KVM's USB-A cable through a
+USB-A-to-USB-C adapter and use the rear USB-C port instead.
+
 ## Prerequisites
 
 - macOS with Homebrew and Git
@@ -84,7 +91,7 @@ The namespace commands are also the built-in command index:
 | `just repo` | List repository workflows |
 | `just talos` | List Talos workflows |
 | `just bootstrap` | List staged bootstrap workflows |
-| `just kube` | List Kubernetes workflows; intentionally empty before Phase 5 |
+| `just kube` | List Kubernetes rendering, validation, and live-status workflows |
 
 All currently defined recipes are listed below. Recipes marked internal are
 normally invoked as dependencies of the operator-facing workflow, but remain
@@ -107,7 +114,13 @@ available for focused developer validation.
 | `just bootstrap status [node]` | Print read-only etcd membership, service, discovery, and recent logs; optionally select one node | Enabled in Phase 4; diagnostic |
 | `just bootstrap retry-join <node>` | Guard and reboot a failed nuc2/nuc3 etcd join without re-bootstrap | Enabled in Phase 4; mutating after confirmation |
 | `just bootstrap verify` | Verify etcd/Kubernetes/Talos and refresh ignored kubeconfig | Enabled in Phase 4 |
-| `just bootstrap cilium` | Install the bootstrap Cilium release | Disabled until Phase 5 |
+| `just kube cilium-render` | Render the pinned Cilium OCI chart to standard output | Enabled in Phase 5; read-only |
+| `just kube cilium-validate` | Validate Cilium sources, values, and the Helm render | Enabled in Phase 5; read-only |
+| `just kube cilium-status` | Print Helm, node, pod, and Cilium status | Enabled in Phase 5; read-only |
+| `just kube cilium-diagnostics` | Print Talos diagnostics from all cluster nodes | Enabled in Phase 5; read-only |
+| `just kube cilium-postflight` | Verify Talos diagnostics and etcd health | Enabled in Phase 5; read-only |
+| `just kube cilium-verify` | Run the Phase 5 gate and temporary connectivity tests | Enabled in Phase 5; creates and removes test resources |
+| `just bootstrap cilium` | Guard and install or reconcile Cilium `1.19.6` | Enabled in Phase 5; mutating after confirmation |
 | `just bootstrap flux` | Bootstrap Flux against this repository | Disabled until Phase 6 |
 
 Recipes for future phases currently fail with a phase-prerequisite message. That
@@ -117,6 +130,9 @@ accidental cluster mutation.
 The Phase 3 apply procedure, including its exact serial-bound confirmation, is
 documented in [`talos/README.md`](talos/README.md) and the installation evidence
 is recorded in [`docs/phase-3-installation.md`](docs/phase-3-installation.md).
+The Cilium ownership boundary, exact confirmation, connectivity test, and Phase 5
+evidence are documented in
+[`docs/phase-5-cilium.md`](docs/phase-5-cilium.md).
 
 ## Secret Access
 
@@ -176,7 +192,6 @@ Use `mise install --locked` when consuming the repository. Use unlocked
   declarative sources; the root `.justfile` only declares namespaces.
 - `clusterconfig/` holds ignored rendered Talos machine configs.
 - `kubernetes/` holds Flux sources beginning in Phase 5.
-- `clusters/nuc/talos/` is the superseded manual layout and is not a rebuild input.
 - `docs/` holds inventory, recovery, secret handling, and phase evidence.
 - `plans/` holds architectural decisions and phased acceptance gates.
 
@@ -186,10 +201,11 @@ repository does not weaken this rule.
 
 ## Current Phase
 
-Phase 4 is complete: etcd was bootstrapped exactly once through the guarded Just
-workflow, all three NUCs are voting members with no alarms, and the VIP-backed
-workstation kubeconfig works. Kubernetes nodes are intentionally `NotReady`
-until Phase 5 installs Cilium. See
+Phase 5 is complete: Cilium `1.19.6` was installed through the guarded Just
+workflow from the canonical future-Flux values, all three NUCs are Ready, and
+DNS, policy, service, cross-node, Hubble, Talos, and etcd acceptance gates pass.
+Flux does not own the release yet; that adoption remains Phase 6. See
 [`docs/phase-3-installation.md`](docs/phase-3-installation.md) for installation
 evidence and [`docs/phase-4-bootstrap.md`](docs/phase-4-bootstrap.md) for the
-bootstrap interface, recovery record, and acceptance evidence.
+bootstrap interface and recovery record. Phase 5 ownership, commands, and live
+evidence are in [`docs/phase-5-cilium.md`](docs/phase-5-cilium.md).

@@ -1,10 +1,5 @@
 # Talos generated configs and secrets
-clusters/**/talos/generated/
-clusters/**/talos/_out/
 /clusterconfig/
-
-clusters/**/talos/secrets/*.yaml
-!clusters/**/talos/secrets/*.sops.yaml
 
 **/talosconfig
 **/kubeconfig

@@ -2,7 +2,7 @@
 
 ## Status
 
-- Revision date: 2026-07-12
+- Revision date: 2026-07-19
 - Status: Approved for implementation
 - First milestone: Talos, Cilium, Flux, and the internal platform foundation
 - Later milestones: storage, applications, media, lifecycle automation, and staging
@@ -29,8 +29,8 @@ Keep the sound architectural choices from the earlier plan:
 - NFS from the UNAS Pro for bulk media and downloads
 
 The work is divided into gated phases. Phases 0 through 8 form the foundation
-milestone. No Longhorn, application migration, or media deployment starts until
-the foundation passes its acceptance and soak tests.
+milestone. No Longhorn, greenfield platform application, or media deployment
+starts until the foundation passes its acceptance and soak tests.
 
 ## Locked Decisions
 
@@ -45,7 +45,7 @@ the foundation passes its acceptance and soak tests.
 | Talos | `v1.13.6` |
 | Kubernetes | `v1.35.6` |
 | Talhelper | `v3.1.13` |
-| Cilium | `v1.19.5` |
+| Cilium | `v1.19.6` |
 | Flux | `v2.9.1` |
 | MetalLB chart | `0.16.1` |
 | Envoy Gateway | `v1.8.0` |
@@ -121,6 +121,38 @@ libraries, not as code generators or permanent upstream dependencies. Adopt:
 
 Do not inherit components merely for ecosystem parity. Every controller in this
 plan must solve a local requirement and have a documented recovery path.
+
+### Legacy GitOps Review: Preserve Intent, Not Artifacts
+
+The existing `homelab-gitops` repository was reviewed after the HomeOps pattern
+review. It remains useful as an operational-requirements inventory, not as a
+deployment source for this greenfield cluster. Retain the domain and Cloudflare
+DNS-01 conventions, Longhorn backup intent, monitoring sizing history, Gatus
+endpoint inventory, Homepage content, Trivy resource constraints, standard
+application labels, and configuration-triggered rollout behavior.
+
+Do not copy ArgoCD Applications or ApplicationSets, implicit recursive directory
+discovery, sync-wave annotations, KSOPS generators, Reflector configuration,
+blanket Secret data drift ignores, Traefik resources, rendered Helm output,
+Kompose output, legacy ciphertext, PVCs, or application data. Secrets are
+recreated from their authoritative sources and encrypted for this repository's
+SOPS identity.
+
+The old static-manifest workaround addressed admission-controller and CRD
+readiness ordering, not a lack of Git webhook support in ArgoCD. Flux is still
+the better fit because `HelmRelease` owns a Helm lifecycle and Flux
+`Kustomization` resources express readiness dependencies directly. Controller
+CRDs and deployments must become Ready before dependent custom resources are
+reconciled.
+
+Application packaging is Helm-first, not Helm-only. Infrastructure controllers
+and applications with maintained charts use `HelmRelease`. Small applications
+without a trustworthy chart use focused native resources. Rendered third-party
+chart output is validation material only and is never committed.
+
+Gatus is the single declarative synthetic-monitoring system. Uptime Kuma is not
+part of the new platform because its legacy deployment was generated rather than
+declaratively maintained and its role is already covered by Gatus.
 
 ### One Private Monorepo
 
@@ -263,10 +295,11 @@ Gateway ownership from application routes, provides portable `HTTPRoute`
 resources, and offers a clearer long-term boundary between platform and app
 configuration.
 
-The migration cost is real: every Traefik route and middleware must be reviewed
-and re-authored, and operational familiarity must be rebuilt. The staged echo
-deployment exists specifically to prove TLS, routing, DNS, and failure behavior
-before applications are converted.
+The re-authoring cost is real: any useful Traefik route or middleware behavior
+must be reviewed and expressed with portable Gateway API resources, and
+operational familiarity must be rebuilt. The staged echo deployment exists
+specifically to prove TLS, routing, DNS, and failure behavior before greenfield
+applications are added.
 
 Envoy Gateway `v1.8.0` is selected because it is a stable release. Its published
 compatibility matrix supports Kubernetes through `v1.35`, which is why the plan
@@ -309,7 +342,9 @@ The existing k3s environment uses ArgoCD, but the new platform adopts Flux becau
 its source, Helm, and Kustomize controllers map cleanly to the desired monorepo and
 dependency-ordered platform layers. Flux can decrypt SOPS secrets natively during
 Kustomization reconciliation and represents Helm installations as reviewable
-`HelmRelease` resources.
+`HelmRelease` resources. ArgoCD does support Git webhooks; the legacy failure mode
+was admission-webhook and CRD readiness combined with template-only Helm
+ownership, not repository notification delivery.
 
 Running both systems would create competing ownership and duplicate operational
 surfaces. ArgoCD resources are therefore reference material only. Flux is
@@ -396,6 +431,13 @@ kubernetes/
   mod.just
   flux/clusters/prod/
   apps/kube-system/cilium/
+    README.md
+    ks.yaml
+    app/
+      kustomization.yaml
+      ocirepository.yaml
+      helmrelease.yaml
+      values.yaml
   apps/networking/metallb/
   apps/networking/envoy-gateway/
   apps/networking/external-dns/
@@ -411,6 +453,12 @@ plans/
 Do not create base/overlay directories for every application before a second
 cluster exists. Add shared bases only when the Pi staging cluster is implemented
 and actual duplication needs to be removed.
+
+Every application owns its Flux entrypoint, chart source, Helm release or focused
+native resources, first-party configuration, routing, monitoring, and local
+documentation under `kubernetes/apps/<namespace>/<app>/`. Directories do not
+become deployable merely by existing; a parent Flux Kustomization must include
+each application explicitly.
 
 ## Command Interface
 
@@ -691,6 +739,9 @@ one etcd cluster because the rebuild uses a fresh Talos identity.
 
 ## Phase 5: Bootstrap Cilium
 
+Implementation and live acceptance evidence are recorded in
+[`docs/phase-5-cilium.md`](../docs/phase-5-cilium.md).
+
 ### Configuration
 
 Keep one canonical values file under the future Flux Cilium application. Use the
@@ -707,13 +758,18 @@ Configure:
 - Hubble relay enabled
 - Hubble UI disabled until the observability phase
 - Default tunnel routing for the initial deployment
+- Default Cilium VLAN filtering; do not configure `bpf.vlanBypass` without a
+  documented cluster requirement for a tagged VLAN
 
 ### Work
 
-1. Install Cilium `v1.19.5` with `helm upgrade --install` and the tracked values.
+1. Install Cilium `v1.19.6` with the guarded `just bootstrap cilium` workflow and
+   the tracked values.
 2. Wait for Cilium agents and operators.
 3. Confirm kube-proxy was not deployed.
-4. Run `cilium status --wait` and `cilium connectivity test`.
+4. Run `cilium status --wait` and the guarded connectivity suite. Keep all
+   functional tests enabled; exclude only the aggregate unexpected-drop counter
+   when upstream non-cluster VLAN broadcasts are independently confirmed.
 5. Verify Kubernetes DNS and cross-node pod traffic.
 
 ### Exit Gate
@@ -848,12 +904,15 @@ the old SSDs be wiped or reused.
 - A Longhorn backup can be restored.
 - Both NFS classes support the expected read/write behavior.
 
-## Phase 10: Application Migration
+## Phase 10: Greenfield Platform Applications
 
-- Port applications one at a time as Flux HelmReleases or focused manifests.
-- Re-author Traefik IngressRoutes as Gateway API HTTPRoutes.
-- Do not port ArgoCD; Flux replaces it.
-- Do not copy generated Helm YAML from `homelab-gitops`.
+- Add applications one at a time as Flux HelmReleases or focused native
+  manifests.
+- Use useful legacy configuration as requirements, then author Gateway API
+  HTTPRoutes and other resources for the new platform.
+- Do not deploy ArgoCD; Flux is the sole reconciler.
+- Do not copy generated Helm YAML, KSOPS resources, PVCs, or application data
+  from `homelab-gitops`.
 - Recreate secrets from authoritative sources and encrypt them with the new SOPS
   key instead of mechanically copying ciphertext from the old repository.
 - Validate DNS, TLS, storage, health probes, and rollback for each application
@@ -864,8 +923,7 @@ Suggested order:
 1. kube-prometheus-stack and Grafana
 2. Gatus
 3. Homepage
-4. Uptime Kuma
-5. Trivy Operator if resource use is acceptable
+4. Trivy Operator if resource use is acceptable
 
 ## Phase 11: Media Platform
 
@@ -926,6 +984,7 @@ This plan intentionally rejects or defers these earlier choices:
 - Talos Image Factory: https://factory.talos.dev
 - Talhelper documentation: https://budimanjojo.github.io/talhelper/latest/
 - Cilium Talos Helm installation: https://docs.cilium.io/en/stable/installation/k8s-install-helm/
+- Cilium Kubernetes compatibility: https://docs.cilium.io/en/stable/network/kubernetes/compatibility/
 - Envoy Gateway compatibility matrix: https://gateway.envoyproxy.io/news/releases/matrix/
 - ExternalDNS Pi-hole guide: https://kubernetes-sigs.github.io/external-dns/latest/docs/tutorials/pihole/
 - Longhorn documentation: https://longhorn.io/docs/

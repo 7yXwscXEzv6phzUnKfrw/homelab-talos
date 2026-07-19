@@ -4,9 +4,6 @@ This repository uses a dedicated age identity for the fresh Talos and Flux
 platform. Only its public recipient is committed. The private identity stays in
 the password-manager item `homelab-talos SOPS age key`.
 
-The legacy encrypted secret under `clusters/nuc/talos/` retains its old recipient
-and identity. It is not an input to the rebuild.
-
 ## Load the Repository Identity
 
 Load the private identity for one shell:

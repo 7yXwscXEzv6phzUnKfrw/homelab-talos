@@ -5,6 +5,3 @@ creation_rules:
   - path_regex: ^kubernetes/.*\.sops\.ya?ml$
     age: age1da2cywfkg9hp6v39jvj9qcmqz4n8w3gm6nqj5vygu7e0zzgnp5psne9wlx
     encrypted_regex: '^(data|stringData)$'
-  - path_regex: clusters/nuc/talos/secrets/.*\.sops\.ya?ml$
-    age: age160x6mcw0yc66hwa29p64hulpatpkqj4sn62yyhjk8ayxfwlwyvgsnr33c3
-    encrypted_regex: '^(.*)$'

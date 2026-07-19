@@ -71,35 +71,14 @@ Secure Boot keys were enrolled from the Talos SecureBoot USB using:
 Enroll Secure Boot keys: auto
 ```
 
-Secure Boot was verified with:
-
-```bash
-talosctl -n <node-ip> -e <node-ip> get securitystate \
-  --talosconfig clusters/nuc/talos/generated/talosconfig
-```
+Secure Boot was verified through the guarded Phase 3 installation workflow and
+is recorded in [`phase-3-installation.md`](phase-3-installation.md).
 
 Expected result:
 
 ```text
 SECUREBOOT   true
 ```
-
-## Legacy Generated Files
-
-Generated Talos files under `clusters/nuc/talos/generated/` are not committed
-because they contain secrets, certificates, and tokens. They are not inputs to
-the fresh rebuild.
-
-Do not commit these unless encrypted with SOPS:
-
-- talosconfig
-- controlplane.yaml
-- worker.yaml
-- controlplane-final.yaml
-- nuc1-controlplane.yaml
-- nuc2-controlplane.yaml
-- nuc3-controlplane.yaml
-- kubeconfig
 
 ## Install Boundary
 

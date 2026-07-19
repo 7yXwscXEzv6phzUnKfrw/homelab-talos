@@ -1,5 +1,0 @@
-machine:
-  install:
-    disk: /dev/nvme0n1
-    image: factory.talos.dev/metal-installer-secureboot/5456009e429379979faf6c8c7c4791309a0b125f3caafc728e8f90c3c5f0deb4:v1.13.2
-    wipe: true

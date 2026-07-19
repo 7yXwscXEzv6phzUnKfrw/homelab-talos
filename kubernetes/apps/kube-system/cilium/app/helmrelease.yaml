@@ -1,0 +1,27 @@
+---
+# yaml-language-server: $schema=https://k8s-schemas.home-operations.com/helm.toolkit.fluxcd.io/helmrelease_v2.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cilium
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: cilium
+  driftDetection:
+    mode: enabled
+  interval: 1h
+  releaseName: cilium
+  storageNamespace: kube-system
+  targetNamespace: kube-system
+  timeout: 10m
+  upgrade:
+    cleanupOnFail: true
+    crds: CreateReplace
+    remediation:
+      retries: 1
+      strategy: rollback
+  valuesFrom:
+    - kind: ConfigMap
+      name: cilium-values
+      valuesKey: values.yaml

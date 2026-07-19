@@ -17,10 +17,6 @@ Talhelper renders per-node machine configs into the ignored root
 `clusterconfig/` directory. Rendered configs contain credentials and must never
 be moved into a trackable path.
 
-The files under `clusters/nuc/talos/` describe the superseded manual
-installation. Do not copy its Talos version, Image Factory schematic, generated
-configs, or cluster identity into this directory.
-
 ## Generation and Validation Workflow
 
 The developer workflow is:
