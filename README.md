@@ -74,7 +74,21 @@ Prefer a Just recipe whenever one exists. Direct `talosctl`, `kubectl`, `helm`,
 `flux`, or `sops` commands are for investigation, recovery documentation, or
 developing a new guarded recipe.
 
-## Operator Commands
+## Just Command Reference
+
+The namespace commands are also the built-in command index:
+
+| Command | Purpose |
+|---|---|
+| `just` | List all top-level namespaces |
+| `just repo` | List repository workflows |
+| `just talos` | List Talos workflows |
+| `just bootstrap` | List staged bootstrap workflows |
+| `just kube` | List Kubernetes workflows; intentionally empty before Phase 5 |
+
+All currently defined recipes are listed below. Recipes marked internal are
+normally invoked as dependencies of the operator-facing workflow, but remain
+available for focused developer validation.
 
 | Recipe | Purpose | Availability |
 |---|---|---|
@@ -82,17 +96,23 @@ developing a new guarded recipe.
 | `just repo versions` | Print the active tool versions | Available |
 | `just repo secrets` | Confirm the loaded age identity matches this repository | Available |
 | `just repo verify` | Check policy, Talos sources, and tracked content for secrets | Available |
+| `just repo verify-files` | Check ignore boundaries and SOPS policy | Available; internal validation |
 | `just repo secret-scan` | Run the repository secret scans directly | Available |
 | `just talos generate` | Render and validate machine configs with Talhelper | Available |
 | `just talos validate` | Strictly validate rendered Talos configs and Phase 2 policy | Available |
-| `just talos apply <node>` | Apply one node's machine config | Enabled in Phase 3 |
-| `just bootstrap talos` | Bootstrap the initial etcd member | Enabled in Phase 4 |
-| `just bootstrap cilium` | Install the bootstrap Cilium release | Enabled in Phase 5 |
-| `just bootstrap flux` | Bootstrap Flux against this repository | Enabled in Phase 6 |
+| `just talos source-validate` | Validate trackable Talhelper inputs without decrypting identity | Available; internal validation |
+| `just talos apply <node>` | Guard, dry-run, and apply one node's machine config | Enabled in Phase 3; destructive after confirmation |
+| `just bootstrap talos` | Bootstrap the initial etcd member | Disabled until Phase 4 |
+| `just bootstrap cilium` | Install the bootstrap Cilium release | Disabled until Phase 5 |
+| `just bootstrap flux` | Bootstrap Flux against this repository | Disabled until Phase 6 |
 
 Recipes for future phases currently fail with a phase-prerequisite message. That
 failure is intentional and prevents a documented interface from becoming an
 accidental cluster mutation.
+
+The Phase 3 apply procedure, including its exact serial-bound confirmation, is
+documented in [`talos/README.md`](talos/README.md) and the installation evidence
+is recorded in [`docs/phase-3-installation.md`](docs/phase-3-installation.md).
 
 ## Secret Access
 
@@ -164,6 +184,7 @@ repository does not weaken this rule.
 
 Phase 2 is complete: the fresh identity, declarative Talhelper configuration,
 Secure Boot schematic, disk policy, rendering workflow, and strict validation
-are established. No cluster API was contacted. Phase 3 is the physical NVMe
-replacement and installation boundary. See
-[`docs/phase-2-talos.md`](docs/phase-2-talos.md) for the evidence.
+are established. Phase 3 is in progress with guarded, one-node-at-a-time NVMe
+installation. See [`docs/phase-2-talos.md`](docs/phase-2-talos.md) for the render
+evidence and [`docs/phase-3-installation.md`](docs/phase-3-installation.md) for
+the physical installation evidence.

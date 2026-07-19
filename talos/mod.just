@@ -93,7 +93,95 @@ validate: source-validate
     }
     echo "All Phase 2 rendered Talos configs passed validation."
 
-# Phase 3 will enable per-node application after explicit safety checks.
-apply node:
-    @echo "Phase 3 prerequisite: talos apply is intentionally disabled (requested node: {{node}})." >&2
-    @exit 1
+# Apply one generated machine config from maintenance mode after checking the
+# live node, Secure Boot state, target NVMe identity, and explicit confirmation.
+apply node: validate
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    node='{{node}}'
+    case "$node" in
+      nuc1) node_ip='192.168.90.10' ;;
+      nuc2) node_ip='192.168.90.11' ;;
+      nuc3) node_ip='192.168.90.12' ;;
+      *)
+        echo "Node must be one of: nuc1, nuc2, nuc3." >&2
+        exit 1
+        ;;
+    esac
+
+    config="../clusterconfig/${node}.yaml"
+    target_disk='/dev/nvme0n1'
+    expected_model='Samsung SSD 990 PRO 1TB'
+    expected_size='1000204886016'
+
+    [[ "$(yq -r 'select(has("machine")) | .machine.install.disk' "$config")" == "$target_disk" ]]
+    [[ "$(yq -r 'select(has("machine")) | .machine.install.wipe' "$config")" == 'true' ]]
+    [[ "$(yq ea -r 'select(.kind == "HostnameConfig") | .hostname' "$config")" == "$node" ]]
+
+    security_state="$(talosctl get securitystate \
+      --nodes "$node_ip" \
+      --endpoints "$node_ip" \
+      --insecure \
+      --output yaml)"
+    [[ "$(yq ea -r 'select(.metadata.id == "securitystate") | .spec.secureBoot' - <<<"$security_state")" == 'true' ]] || {
+      echo "Refusing to apply: Secure Boot is not reported as enabled on $node." >&2
+      exit 1
+    }
+
+    disk_state="$(talosctl get disks \
+      --nodes "$node_ip" \
+      --endpoints "$node_ip" \
+      --insecure \
+      --output yaml)"
+    disk_model="$(yq ea -r 'select(.spec.dev_path == "/dev/nvme0n1") | .spec.model' - <<<"$disk_state")"
+    disk_serial="$(yq ea -r 'select(.spec.dev_path == "/dev/nvme0n1") | .spec.serial' - <<<"$disk_state")"
+    disk_size="$(yq ea -r 'select(.spec.dev_path == "/dev/nvme0n1") | .spec.size' - <<<"$disk_state")"
+    disk_transport="$(yq ea -r 'select(.spec.dev_path == "/dev/nvme0n1") | .spec.transport' - <<<"$disk_state")"
+    disk_readonly="$(yq ea -r 'select(.spec.dev_path == "/dev/nvme0n1") | .spec.readonly' - <<<"$disk_state")"
+    unexpected_internal="$(yq ea -r 'select(.spec.bus_path != "/virtual" and .spec.transport != "usb" and .spec.dev_path != "/dev/nvme0n1") | .spec.dev_path' - <<<"$disk_state")"
+    usb_boot="$(yq ea -r 'select(.spec.transport == "usb") | .spec.dev_path' - <<<"$disk_state")"
+
+    [[ "$disk_model" == "$expected_model" ]] || {
+      echo "Refusing to apply: expected $expected_model, found $disk_model." >&2
+      exit 1
+    }
+    [[ -n "$disk_serial" && "$disk_serial" != 'null' ]]
+    [[ "$disk_size" == "$expected_size" ]] || {
+      echo "Refusing to apply: expected $expected_size bytes, found $disk_size." >&2
+      exit 1
+    }
+    [[ "$disk_transport" == 'nvme' ]]
+    [[ "$disk_readonly" == 'false' ]]
+    [[ -z "$unexpected_internal" ]] || {
+      echo "Refusing to apply: unexpected internal disk(s): $unexpected_internal" >&2
+      exit 1
+    }
+    [[ -n "$usb_boot" ]] || {
+      echo "Refusing to apply: no USB boot device is visible." >&2
+      exit 1
+    }
+
+    if ! talosctl apply-config \
+      --nodes "$node_ip" \
+      --endpoints "$node_ip" \
+      --insecure \
+      --file "$config" \
+      --dry-run >/dev/null 2>&1; then
+      echo "Refusing to apply: Talos rejected the machine-config dry run." >&2
+      exit 1
+    fi
+
+    expected_confirmation="${node}:${target_disk}:${disk_serial}"
+    [[ "${TALOS_APPLY_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo "Refusing to wipe $target_disk." >&2
+      echo "Set TALOS_APPLY_CONFIRM='$expected_confirmation' and rerun after reviewing the live checks." >&2
+      exit 1
+    }
+
+    echo "Applying $config to $node ($node_ip); Talos will wipe $target_disk and reboot."
+    talosctl apply-config \
+      --nodes "$node_ip" \
+      --endpoints "$node_ip" \
+      --insecure \
+      --file "$config"
