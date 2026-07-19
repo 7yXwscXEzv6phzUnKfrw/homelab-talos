@@ -8,10 +8,10 @@
 - Chart: Cilium `1.19.6`
 - Release: `cilium` in `kube-system`
 - Source: `oci://quay.io/cilium/charts/cilium`
-- Flux ownership: not active until Phase 6
+- Flux ownership: adopted by Flux in completed Phase 6
 
-Phase 5 installs the cluster CNI from the same app-local values that Flux will
-adopt in Phase 6. It does not install Flux, MetalLB, Envoy Gateway, application
+Phase 5 installed the cluster CNI from the same app-local values that Flux later
+adopted in Phase 6. It did not install Flux, MetalLB, Envoy Gateway, application
 workloads, storage controllers, or default-deny network policies.
 
 ## Just Interface
@@ -25,7 +25,7 @@ workflow.
 | `just kube cilium-validate` | Checks the Flux package, canonical values, and rendered Helm resources |
 | `just kube cilium-status` | Prints read-only Helm, node, workload, and Cilium status |
 | `just kube cilium-diagnostics` | Prints read-only Talos diagnostics from all three nodes |
-| `just kube cilium-postflight` | Verifies zero Talos diagnostics, three etcd members, and zero etcd alarms |
+| `just kube cilium-postflight` | Verifies test cleanup, zero Talos diagnostics, three etcd members, and zero etcd alarms |
 | `just kube cilium-verify` | Runs the full acceptance gate and temporary IPv4 connectivity workloads |
 | `just bootstrap cilium` | Runs preflight, requires confirmation, installs or reconciles Helm, and verifies |
 
@@ -39,14 +39,14 @@ diagnostic escalation order, and when the full connectivity suite is warranted.
 ## Ownership Boundary
 
 `kubernetes/apps/kube-system/cilium/app/values.yaml` is the sole values source.
-The Phase 5 recipe passes it directly to Helm. The future Flux app generates the
+The Phase 5 recipe passed it directly to Helm. The Flux app now generates the
 watched `cilium-values` ConfigMap from the same file and the HelmRelease consumes
 that ConfigMap through `valuesFrom`.
 
-Phase 5 does not apply the Flux Kustomization, OCIRepository, or HelmRelease
-because their CRDs do not exist yet. Phase 6 will apply those resources with the
-same release name, namespace, chart version, and values so helm-controller can
-adopt the existing Helm release without changing the datapath.
+Phase 5 did not apply the Flux Kustomization, OCIRepository, or HelmRelease
+because their CRDs did not exist yet. Phase 6 applied those resources with the
+same release name, namespace, chart version, and values; the completed adoption
+evidence is in [`phase-6-flux.md`](phase-6-flux.md).
 
 ## Guarded Installation
 

@@ -142,9 +142,18 @@ cilium-postflight:
     #!/usr/bin/env bash
     set -euo pipefail
 
+    kubeconfig='{{kubeconfig}}'
     just kube cilium-diagnostics
 
-    kubeconfig='{{kubeconfig}}'
+    terminating_test_namespaces="$(kubectl --kubeconfig "$kubeconfig" get namespaces --output json | \
+      yq -r '.items[] | select(.metadata.name | test("^cilium-test")) | select(.metadata.deletionTimestamp != null) | .metadata.name')"
+    while IFS= read -r namespace; do
+      [[ -n "$namespace" ]] || continue
+      kubectl --kubeconfig "$kubeconfig" wait \
+        --for=delete "namespace/$namespace" \
+        --timeout=2m
+    done <<<"$terminating_test_namespaces"
+
     remaining_test_namespaces="$(kubectl --kubeconfig "$kubeconfig" get namespaces --output json | \
       yq -r '.items[].metadata.name | select(test("^cilium-test"))')"
     [[ -z "$remaining_test_namespaces" ]] || {
@@ -264,9 +273,9 @@ cilium-verify:
       exit 1
     fi
 
+    cleanup
     just kube cilium-postflight
 
-    cleanup
     trap - EXIT
     rm -rf -- "$diagnostic_dir"
     echo 'Phase 5 verification passed: Cilium 1.19.6, three Ready nodes, healthy DNS, Hubble, connectivity, Talos, and etcd.'

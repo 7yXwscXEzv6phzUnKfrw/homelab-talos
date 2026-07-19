@@ -118,18 +118,18 @@ available for focused developer validation.
 | `just kube cilium-validate` | Validate Cilium sources, values, and the Helm render | Enabled in Phase 5; read-only |
 | `just kube cilium-status` | Print Helm, node, pod, and Cilium status | Enabled in Phase 5; read-only |
 | `just kube cilium-diagnostics` | Print Talos diagnostics from all cluster nodes | Enabled in Phase 5; read-only |
-| `just kube cilium-postflight` | Verify Talos diagnostics and etcd health | Enabled in Phase 5; read-only |
+| `just kube cilium-postflight` | Verify test cleanup, Talos diagnostics, and etcd health | Enabled in Phase 5; read-only |
 | `just kube cilium-verify` | Run the Phase 5 gate and temporary connectivity tests | Enabled in Phase 5; creates and removes test resources |
 | `just bootstrap cilium` | Guard and install or reconcile Cilium `1.19.6` | Enabled in Phase 5; mutating after confirmation |
-| `just kube flux-validate` | Validate Flux sources, SOPS canary, dependencies, and Cilium adoption guards | Implemented in Phase 6; read-only |
-| `just kube flux-preflight` | Verify published Git, Cilium/Talos/etcd health, and Kubernetes compatibility | Implemented in Phase 6; read-only |
-| `just bootstrap flux` | Bootstrap Flux `2.9.2` and a read-only GitHub SSH deploy key | Implemented in Phase 6; mutating after confirmation |
-| `just bootstrap flux-sops` | Create or verify the matching in-cluster SOPS identity | Implemented in Phase 6; mutating after confirmation |
+| `just kube flux-validate` | Validate Flux sources, SOPS canary, dependencies, and Cilium adoption guards | Enabled in Phase 6; read-only |
+| `just kube flux-preflight` | Verify published Git, Cilium/Talos/etcd health, and Kubernetes compatibility | Enabled in Phase 6; read-only |
+| `just bootstrap flux` | Bootstrap Flux `2.9.2` and a read-only GitHub SSH deploy key | Enabled in Phase 6; mutating after confirmation |
+| `just bootstrap flux-sops` | Create or verify the matching in-cluster SOPS identity | Enabled in Phase 6; mutating after confirmation |
 | `just bootstrap flux-ssh-known-hosts` | Preserve the deploy key and repair GitHub port-443 host trust | Phase 6 recovery; mutating after confirmation |
-| `just bootstrap flux-adopt-cilium` | Adopt Cilium with guarded workload health and stage the permanent unsuspend | Implemented in Phase 6; mutating after confirmation |
-| `just kube flux-status` | Print Flux controllers and reconciliation state | Implemented in Phase 6; read-only |
-| `just kube flux-verify` | Verify Flux source auth, SOPS, canary, Cilium, Talos, and etcd | Implemented in Phase 6; read-only |
-| `just kube flux-canary-test` | Prove Flux recreates the guarded noncritical canary Secret | Implemented in Phase 6; mutating after confirmation |
+| `just bootstrap flux-adopt-cilium` | Adopt Cilium with guarded workload health and stage the permanent unsuspend | Enabled in Phase 6; mutating after confirmation |
+| `just kube flux-status` | Print Flux controllers and reconciliation state | Enabled in Phase 6; read-only |
+| `just kube flux-verify` | Verify Flux source auth, SOPS, canary, Cilium, Talos, and etcd | Enabled in Phase 6; read-only |
+| `just kube flux-canary-test` | Prove Flux recreates the guarded noncritical canary Secret | Enabled in Phase 6; mutating after confirmation |
 
 Future-phase cluster mutations are added only with their validation, guard, and
 documentation boundary. Do not replace a missing workflow with an ad hoc apply.
@@ -153,7 +153,7 @@ mise exec -- just kube cilium-status
 mise exec -- just kube cilium-postflight
 ```
 
-After Phase 6 bootstrap is complete, begin with the aggregate Flux view:
+Begin with the aggregate Flux view:
 
 ```bash
 mise exec -- just kube flux-status
@@ -170,7 +170,7 @@ result shows:
 - No temporary `cilium-test*` namespaces.
 - No Talos diagnostics on any node.
 - Three etcd members and no etcd alarms.
-- After Phase 6, four healthy Flux controllers and all sources,
+- Four healthy Flux controllers and all sources,
   Kustomizations, and HelmReleases reporting Ready.
 
 If either command fails, use the read-only checks in this order:
@@ -271,14 +271,13 @@ repository does not weaken this rule.
 
 ## Current Phase
 
-Phase 5 is complete: Cilium `1.19.6` was installed through the guarded Just
-workflow from the canonical future-Flux values, all three NUCs are Ready, and
-DNS, policy, service, cross-node, Hubble, Talos, and etcd acceptance gates pass.
-Phase 6 sources and guarded workflows are prepared with Flux `2.9.2`; live
-bootstrap, SOPS installation, Cilium adoption, and canary evidence remain before
-the phase can be marked complete. See
+Phase 6 is complete: Flux `2.9.2` reconciles the private repository with a
+read-only deploy key over SSH port 443, decrypts the permanent SOPS canary,
+repairs tested drift, and owns Cilium `1.19.6`. All four Flux Kustomizations are
+Ready and unsuspended; Cilium, Talos, and etcd acceptance gates pass. Phase 7,
+the internal platform foundation beginning with cert-manager, is next. See
 [`docs/phase-3-installation.md`](docs/phase-3-installation.md) for installation
 evidence and [`docs/phase-4-bootstrap.md`](docs/phase-4-bootstrap.md) for the
-bootstrap interface and recovery record. Phase 5 ownership, commands, and live
-evidence are in [`docs/phase-5-cilium.md`](docs/phase-5-cilium.md); the next
-execution sequence is in [`docs/phase-6-flux.md`](docs/phase-6-flux.md).
+bootstrap interface and recovery record. Phase 5 commands and live evidence are
+in [`docs/phase-5-cilium.md`](docs/phase-5-cilium.md); Flux ownership and Phase 6
+acceptance evidence are in [`docs/phase-6-flux.md`](docs/phase-6-flux.md).

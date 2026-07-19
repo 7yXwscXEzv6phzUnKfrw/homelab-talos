@@ -787,13 +787,14 @@ Configure:
 
 ## Phase 6: Publish and Bootstrap Flux
 
-### Preparation State (2026-07-19)
+### Completion State (2026-07-19)
 
-Steps 1 and 2 are complete against the existing private personal repository
+Phase 6 is complete against the existing private personal repository
 `7yXwscXEzv6phzUnKfrw/homelab-talos`. Flux `2.9.2`, the production app root,
 encrypted permanent canary, staged Cilium adoption protections, and all guarded
-Just workflows are implemented. Live bootstrap and acceptance evidence remain;
-Phase 6 is not yet complete.
+Just workflows are live. The read-only Git source, SOPS decryption, canary drift
+repair, Cilium ownership, connectivity suite, Talos diagnostics, and etcd exit
+gates passed. Exact evidence is recorded in `docs/phase-6-flux.md`.
 
 ### Work
 
@@ -810,8 +811,10 @@ Phase 6 is not yet complete.
 7. Keep infrastructure sources and application definitions declarative; do not
    commit rendered vendor charts.
 8. Keep Cilium suspended and prune-protected on first reconciliation, then use
-   `just bootstrap flux-adopt-cilium` to verify a no-rollout ownership transfer
-   before committing the permanent unsuspend.
+   `just bootstrap flux-adopt-cilium` to bound the one-time ownership and
+   certificate-material replacement, verify every workload returns Ready with
+   zero restarts, and prove a repeated adoption causes no further rollout before
+   committing the permanent unsuspend.
 9. Retain the SOPS-encrypted `flux-canary` Secret and prove guarded deletion is
    repaired by its dependent Kustomization.
 

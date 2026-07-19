@@ -3,7 +3,8 @@
 ## Status
 
 - Prepared: 2026-07-19
-- State: Declarative sources and guarded workflows implemented; live bootstrap pending operator credentials
+- Completed: 2026-07-19
+- State: Complete
 - Flux CLI and controllers: `2.9.2`
 - Git source: `ssh://git@ssh.github.com:443/7yXwscXEzv6phzUnKfrw/homelab-talos`
 - Sync path: `kubernetes/flux/clusters/prod`
@@ -156,7 +157,7 @@ decrypted marker.
 
 ## Exit Gate
 
-Phase 6 is complete only when live evidence records all of the following:
+Phase 6 required live evidence for all of the following:
 
 - Four Flux controllers are healthy at `2.9.2`.
 - The GitRepository is Ready on `main` using the matching read-only SSH deploy key.
@@ -169,5 +170,28 @@ Phase 6 is complete only when live evidence records all of the following:
 - The canary recreation test produces a different Secret UID.
 - Cilium, Talos diagnostics, and etcd postflight checks still pass.
 
-Until those checks are recorded, the current completed platform phase remains
-Phase 5.
+## Acceptance Evidence
+
+Recorded on 2026-07-19:
+
+| Check | Result |
+|---|---|
+| Flux installation | Pass; distribution `2.9.2`, all four controllers Ready with one replica and zero restarts |
+| Git source | Pass; private `main` source Ready through `ssh.github.com:443` with the repository-scoped read-only deploy key; acceptance revision `3062c618` |
+| Git credential boundary | Pass; the cluster source Secret contains only `identity`, `identity.pub`, and `known_hosts`; the temporary bootstrap PAT was not stored in Kubernetes |
+| Flux graph | Pass; `flux-system`, `cluster-apps`, `cilium`, and `flux-canary` are Ready and unsuspended at the same source revision |
+| SOPS | Pass; the live `sops-age` identity derives committed recipient `age1da2cywfkg9hp6v39jvj9qcmqz4n8w3gm6nqj5vygu7e0zzgnp5psne9wlx` |
+| Reconciliation canary | Pass; the encrypted marker decrypts to `ready`, and guarded deletion produced a new Secret UID |
+| Cilium source | Pass; OCI tag `1.19.6` is Ready at digest `sha256:b8d600c542c97dc8652429e12487ecce922d73de9785505457a8f653833e75f9` |
+| Cilium ownership | Pass; Helm Controller owns Ready revision 2 at `1.19.6+b8d600c542c9` |
+| Initial adoption | Pass; the expected one-time ownership/certificate replacement returned all agents, operators, and Hubble Relay to Ready with zero container restarts |
+| Adoption idempotence | Pass; the recovered repeat kept Helm revision 2 and caused no additional pod replacement or restart |
+| Cilium functional gate | Pass twice; all 79 applicable tests and 692 actions succeeded, 53 feature-gated or unsafe tests were skipped, and 0 scenarios were skipped |
+| Test cleanup | Pass; explicit cleanup runs before postflight, terminating namespaces receive a bounded deletion wait, and no `cilium-test*` namespace remains |
+| Talos and etcd | Pass; no diagnostics on nuc1, nuc2, or nuc3; three etcd members, no learners, errors, or alarms |
+
+Outbound SSH port 22 timed out from this environment, so the source was migrated
+to GitHub's supported SSH-over-HTTPS endpoint. The guarded recovery preserved the
+deploy identity and verified GitHub's published ECDSA fingerprint before changing
+only the source Secret's host trust. Final Flux verification also passed after
+the durable `suspend: false` source was committed and reconciled.
