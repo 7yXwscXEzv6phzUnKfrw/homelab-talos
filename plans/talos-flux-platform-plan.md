@@ -16,7 +16,7 @@ treated the work as a migration from the manually generated Talos cluster.
 Rebuild instead of migrating. The current Kubernetes cluster has no workloads or
 persistent data worth preserving, so the NVMe replacement is a clean boundary for
 a new Talos identity, declarative talhelper configuration, a new SOPS identity,
-and a private `ksiggins/homelab-talos` monorepo.
+and the private `7yXwscXEzv6phzUnKfrw/homelab-talos` monorepo.
 
 Keep the sound architectural choices from the earlier plan:
 
@@ -36,7 +36,7 @@ starts until the foundation passes its acceptance and soak tests.
 
 | Decision | Choice |
 |---|---|
-| Repository | Private `ksiggins/homelab-talos` monorepo |
+| Repository | Private `7yXwscXEzv6phzUnKfrw/homelab-talos` monorepo |
 | Cluster | `nuc-cluster` |
 | Nodes | `nuc1`, `nuc2`, `nuc3` |
 | Node addresses | `192.168.90.10-12` via DHCP reservations |
@@ -46,7 +46,7 @@ starts until the foundation passes its acceptance and soak tests.
 | Kubernetes | `v1.35.6` |
 | Talhelper | `v3.1.13` |
 | Cilium | `v1.19.6` |
-| Flux | `v2.9.1` |
+| Flux | `v2.9.2` |
 | MetalLB chart | `0.16.1` |
 | Envoy Gateway | `v1.8.0` |
 | ExternalDNS | `v0.21.0` |
@@ -430,6 +430,12 @@ clusterconfig/                         # generated and ignored
 kubernetes/
   mod.just
   flux/clusters/prod/
+    apps.yaml
+  apps/flux-system/flux-canary/
+    ks.yaml
+    app/
+      kustomization.yaml
+      secret.sops.yaml
   apps/kube-system/cilium/
     README.md
     ks.yaml
@@ -781,17 +787,33 @@ Configure:
 
 ## Phase 6: Publish and Bootstrap Flux
 
+### Preparation State (2026-07-19)
+
+Steps 1 and 2 are complete against the existing private personal repository
+`7yXwscXEzv6phzUnKfrw/homelab-talos`. Flux `2.9.2`, the production app root,
+encrypted permanent canary, staged Cilium adoption protections, and all guarded
+Just workflows are implemented. Live bootstrap and acceptance evidence remain;
+Phase 6 is not yet complete.
+
 ### Work
 
-1. Create the private `ksiggins/homelab-talos` GitHub repository.
-2. Configure `origin`, push `main`, and confirm generated credentials are absent.
-3. Bootstrap Flux at `kubernetes/flux/clusters/prod` with a read-only deploy key.
-4. Create `flux-system/sops-age` out of band from the password-manager private key.
+1. Use the existing private `7yXwscXEzv6phzUnKfrw/homelab-talos` GitHub repository.
+2. Confirm `origin`, `main`, and generated-credential exclusions through the
+   repository checks.
+3. Bootstrap Flux `2.9.2` at `kubernetes/flux/clusters/prod` with a unique
+   read-only deploy key and one-minute Git polling.
+4. Create `flux-system/sops-age` through `just bootstrap flux-sops` from the
+   password-manager private key; never give the key to GitHub or the bootstrap PAT.
 5. Configure Flux Kustomizations with SOPS decryption and explicit dependencies.
 6. Add a Flux HelmRelease matching the existing Cilium release name, namespace,
    chart version, and values so Flux adopts it without a disruptive reconfiguration.
 7. Keep infrastructure sources and application definitions declarative; do not
    commit rendered vendor charts.
+8. Keep Cilium suspended and prune-protected on first reconciliation, then use
+   `just bootstrap flux-adopt-cilium` to verify a no-rollout ownership transfer
+   before committing the permanent unsuspend.
+9. Retain the SOPS-encrypted `flux-canary` Secret and prove guarded deletion is
+   repaired by its dependent Kustomization.
 
 ### Exit Gate
 

@@ -1,8 +1,7 @@
 # Kubernetes Source Boundary
 
-This directory will hold resources reconciled by Flux. Cilium bootstrap begins
-in Phase 5 and the production Flux entrypoint begins in Phase 6. Until then, the
-bootstrap recipes intentionally fail.
+This directory holds resources reconciled by Flux. Cilium bootstrap begins in
+Phase 5 and the guarded production Flux entrypoint is implemented in Phase 6.
 
 ## Layout Rules
 
@@ -30,6 +29,12 @@ Split controllers from the custom resources that depend on them, then use
 before issuers, MetalLB before address-pool resources, Envoy Gateway before
 Gateways and HTTPRoutes, and Longhorn before PVC consumers.
 
+The production root at `flux/clusters/prod/apps.yaml` creates the `cluster-apps`
+Kustomization. Explicit native Kustomization files under `apps/` select the child
+Flux Kustomizations; Flux does not recursively deploy arbitrary directories.
+`cluster-apps` uses `deletionPolicy: Orphan` so loss of the root object does not
+cascade into live workloads.
+
 ## Cilium Bootstrap Boundary
 
 Cilium is the only Kubernetes component installed before Flux because the nodes
@@ -50,8 +55,10 @@ cilium/
 `values.yaml` is the single configuration source. `just bootstrap cilium` passes
 it to Helm during Phase 5. In Phase 6, the app Kustomization publishes the same
 file as a watched ConfigMap and the HelmRelease adopts the existing `cilium`
-release in `kube-system`. Do not apply `ks.yaml`, `ocirepository.yaml`, or
-`helmrelease.yaml` manually before Flux is installed.
+release in `kube-system`. Cilium begins suspended and protected from pruning;
+the guarded adoption recipe records pod UIDs and restarts across the transfer
+before staging the permanent Git unsuspend. Do not apply `ks.yaml`,
+`ocirepository.yaml`, or `helmrelease.yaml` manually.
 
 All supported Cilium workflows are Just recipes:
 
@@ -64,6 +71,19 @@ All supported Cilium workflows are Just recipes:
 | `just kube cilium-postflight` | Verify test cleanup, Talos diagnostics, and etcd health for routine or post-test checks |
 | `just kube cilium-verify` | Run the live Phase 5 gate and temporary connectivity workloads |
 | `just bootstrap cilium` | Guard and install or reconcile the bootstrap Helm release |
+
+Flux workflows are also Just-managed:
+
+| Command | Behavior |
+|---|---|
+| `just kube flux-validate` | Validate the local Flux graph, SOPS canary, Cilium guards, Kustomizations, and pinned OCI render |
+| `just kube flux-preflight` | Check published Git state, live Cilium/Talos/etcd health, and Kubernetes compatibility |
+| `just bootstrap flux` | Bootstrap Flux `2.9.2` with a read-only GitHub SSH deploy key |
+| `just bootstrap flux-sops` | Install or verify the matching `flux-system/sops-age` identity |
+| `just bootstrap flux-adopt-cilium` | Transfer Cilium ownership without a pod rollout and stage the Git unsuspend |
+| `just kube flux-status` | Print read-only controllers, sources, Kustomizations, HelmReleases, and pods |
+| `just kube flux-verify` | Verify source auth, SOPS, canary, Cilium ownership, Talos, and etcd |
+| `just kube flux-canary-test` | Guard deletion and Flux recreation of the noncritical canary Secret |
 
 Kubernetes Secret manifests use the `*.sops.yaml` suffix. SOPS encrypts only
 their `data` and `stringData` fields so metadata remains reviewable by Flux. Load
@@ -84,4 +104,6 @@ Flux. Direct `kubectl apply` is reserved for documented bootstrap or recovery
 steps; it is not the steady-state deployment workflow.
 
 See the root [`README.md`](../README.md) for workstation setup and
-[`docs/sops.md`](../docs/sops.md) for the complete encryption policy.
+[`docs/phase-6-flux.md`](../docs/phase-6-flux.md) for the staged bootstrap and
+adoption procedure. [`docs/sops.md`](../docs/sops.md) defines the encryption
+policy.

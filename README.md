@@ -121,11 +121,17 @@ available for focused developer validation.
 | `just kube cilium-postflight` | Verify Talos diagnostics and etcd health | Enabled in Phase 5; read-only |
 | `just kube cilium-verify` | Run the Phase 5 gate and temporary connectivity tests | Enabled in Phase 5; creates and removes test resources |
 | `just bootstrap cilium` | Guard and install or reconcile Cilium `1.19.6` | Enabled in Phase 5; mutating after confirmation |
-| `just bootstrap flux` | Bootstrap Flux against this repository | Disabled until Phase 6 |
+| `just kube flux-validate` | Validate Flux sources, SOPS canary, dependencies, and Cilium adoption guards | Implemented in Phase 6; read-only |
+| `just kube flux-preflight` | Verify published Git, Cilium/Talos/etcd health, and Kubernetes compatibility | Implemented in Phase 6; read-only |
+| `just bootstrap flux` | Bootstrap Flux `2.9.2` and a read-only GitHub SSH deploy key | Implemented in Phase 6; mutating after confirmation |
+| `just bootstrap flux-sops` | Create or verify the matching in-cluster SOPS identity | Implemented in Phase 6; mutating after confirmation |
+| `just bootstrap flux-adopt-cilium` | Adopt Cilium without a rollout and stage the permanent unsuspend | Implemented in Phase 6; mutating after confirmation |
+| `just kube flux-status` | Print Flux controllers and reconciliation state | Implemented in Phase 6; read-only |
+| `just kube flux-verify` | Verify Flux source auth, SOPS, canary, Cilium, Talos, and etcd | Implemented in Phase 6; read-only |
+| `just kube flux-canary-test` | Prove Flux recreates the guarded noncritical canary Secret | Implemented in Phase 6; mutating after confirmation |
 
-Recipes for future phases currently fail with a phase-prerequisite message. That
-failure is intentional and prevents a documented interface from becoming an
-accidental cluster mutation.
+Future-phase cluster mutations are added only with their validation, guard, and
+documentation boundary. Do not replace a missing workflow with an ad hoc apply.
 
 The Phase 3 apply procedure, including its exact serial-bound confirmation, is
 documented in [`talos/README.md`](talos/README.md) and the installation evidence
@@ -133,6 +139,9 @@ is recorded in [`docs/phase-3-installation.md`](docs/phase-3-installation.md).
 The Cilium ownership boundary, exact confirmation, connectivity test, and Phase 5
 evidence are documented in
 [`docs/phase-5-cilium.md`](docs/phase-5-cilium.md).
+The Flux credential model, staged Cilium adoption, exact confirmations, and
+Phase 6 acceptance gate are in
+[`docs/phase-6-flux.md`](docs/phase-6-flux.md).
 
 ## Daily Cluster Health Check
 
@@ -141,6 +150,12 @@ From the repository root, run these two read-only checks:
 ```bash
 mise exec -- just kube cilium-status
 mise exec -- just kube cilium-postflight
+```
+
+After Phase 6 bootstrap is complete, begin with the aggregate Flux view:
+
+```bash
+mise exec -- just kube flux-status
 ```
 
 If the mise environment is already activated, omit `mise exec --`. A healthy
@@ -154,6 +169,8 @@ result shows:
 - No temporary `cilium-test*` namespaces.
 - No Talos diagnostics on any node.
 - Three etcd members and no etcd alarms.
+- After Phase 6, four healthy Flux controllers and all sources,
+  Kustomizations, and HelmReleases reporting Ready.
 
 If either command fails, use the read-only checks in this order:
 
@@ -256,8 +273,11 @@ repository does not weaken this rule.
 Phase 5 is complete: Cilium `1.19.6` was installed through the guarded Just
 workflow from the canonical future-Flux values, all three NUCs are Ready, and
 DNS, policy, service, cross-node, Hubble, Talos, and etcd acceptance gates pass.
-Flux does not own the release yet; that adoption remains Phase 6. See
+Phase 6 sources and guarded workflows are prepared with Flux `2.9.2`; live
+bootstrap, SOPS installation, Cilium adoption, and canary evidence remain before
+the phase can be marked complete. See
 [`docs/phase-3-installation.md`](docs/phase-3-installation.md) for installation
 evidence and [`docs/phase-4-bootstrap.md`](docs/phase-4-bootstrap.md) for the
 bootstrap interface and recovery record. Phase 5 ownership, commands, and live
-evidence are in [`docs/phase-5-cilium.md`](docs/phase-5-cilium.md).
+evidence are in [`docs/phase-5-cilium.md`](docs/phase-5-cilium.md); the next
+execution sequence is in [`docs/phase-6-flux.md`](docs/phase-6-flux.md).

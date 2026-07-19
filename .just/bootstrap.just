@@ -475,7 +475,217 @@ cilium:
 
     just kube cilium-verify
 
-# Phase 6 will enable Flux bootstrap.
+# Bootstrap Flux 2.9.2 with a unique read-only GitHub SSH deploy key.
 flux:
-    @echo "Phase 6 prerequisite: bootstrap flux is intentionally disabled." >&2
-    @exit 1
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    owner='7yXwscXEzv6phzUnKfrw'
+    repository='homelab-talos'
+    kubeconfig='kubeconfig'
+    expected_confirmation="bootstrap:flux:prod:${owner}/${repository}:read-only"
+
+    just kube flux-preflight
+    [[ -n "${GITHUB_TOKEN:-}" ]] || {
+      echo 'Set GITHUB_TOKEN to the temporary repository-scoped Flux bootstrap PAT.' >&2
+      exit 1
+    }
+    [[ "${FLUX_BOOTSTRAP_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to bootstrap Flux or create a GitHub deploy key.' >&2
+      echo "Set FLUX_BOOTSTRAP_CONFIRM='$expected_confirmation' after reviewing the preflight." >&2
+      exit 1
+    }
+
+    authenticated_user="$(GH_TOKEN="$GITHUB_TOKEN" gh api user --jq '.login')"
+    [[ "$authenticated_user" == "$owner" ]] || {
+      echo "The GitHub token belongs to $authenticated_user, not $owner." >&2
+      exit 1
+    }
+    repository_state="$(GH_TOKEN="$GITHUB_TOKEN" gh api "repos/${owner}/${repository}")"
+    [[ "$(yq -r '.full_name' - <<<"$repository_state")" == "${owner}/${repository}" ]]
+    [[ "$(yq -r '.private' - <<<"$repository_state")" == 'true' ]] || {
+      echo 'Refusing Flux bootstrap: the GitHub repository is not private.' >&2
+      exit 1
+    }
+    [[ "$(yq -r '.permissions.admin and .permissions.push' - <<<"$repository_state")" == 'true' ]] || {
+      echo 'The bootstrap PAT needs repository Administration and Contents write access.' >&2
+      exit 1
+    }
+
+    flux bootstrap github \
+      --kubeconfig "$kubeconfig" \
+      --owner "$owner" \
+      --repository "$repository" \
+      --personal \
+      --private=true \
+      --reconcile \
+      --branch main \
+      --path kubernetes/flux/clusters/prod \
+      --read-write-key=false \
+      --ssh-key-algorithm ed25519 \
+      --interval 1m \
+      --network-policy=true \
+      --version v2.9.2 \
+      --timeout 10m
+
+    git pull --ff-only origin main
+    flux check --kubeconfig "$kubeconfig" --timeout 10m
+
+    source_secret="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get secret flux-system --output json)"
+    source_secret_keys="$(yq -r '.data | keys | .[]' - <<<"$source_secret" | sort)"
+    [[ "$source_secret_keys" == $'identity\nidentity.pub\nknown_hosts' ]] || {
+      echo "Unexpected Flux source credential fields: $source_secret_keys" >&2
+      exit 1
+    }
+    cluster_public_key="$(yq -r '.data."identity.pub"' - <<<"$source_secret" | base64 --decode | awk '{print $1 " " $2}')"
+    matching_key="$(GH_TOKEN="$GITHUB_TOKEN" gh api "repos/${owner}/${repository}/keys" \
+      --jq '.[] | select(.read_only == true) | .key' | awk '{print $1 " " $2}' | rg -Fx "$cluster_public_key" || true)"
+    [[ "$matching_key" == "$cluster_public_key" ]] || {
+      echo 'Flux SSH public key does not match a read-only GitHub deploy key.' >&2
+      exit 1
+    }
+
+    echo 'Flux 2.9.2 bootstrap passed: four controllers are healthy and Git uses the matching read-only SSH deploy key.'
+    echo 'The GitHub PAT was not stored in the cluster; unset GITHUB_TOKEN after the bootstrap session.'
+
+# Create the Flux SOPS decryption Secret from the validated workstation identity.
+flux-sops:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    expected_confirmation='create:flux-system:sops-age'
+    expected_recipient="$(yq -r '.creation_rules[] | select(.path_regex | test("kubernetes")) | .age' .sops.yaml)"
+    key_file="$(mktemp /tmp/homelab-talos-flux-sops.XXXXXX)"
+    trap 'rm -f -- "$key_file"' EXIT
+    chmod 600 "$key_file"
+
+    flux check --kubeconfig "$kubeconfig"
+    just repo secrets
+
+    if [[ -n "${SOPS_AGE_KEY_FILE:-}" ]]; then
+      cp -- "$SOPS_AGE_KEY_FILE" "$key_file"
+    else
+      printf '%s\n' "$SOPS_AGE_KEY" >"$key_file"
+    fi
+    [[ "$(age-keygen -y "$key_file")" == "$expected_recipient" ]]
+
+    if kubectl --kubeconfig "$kubeconfig" --namespace flux-system get secret sops-age >/dev/null 2>&1; then
+      live_key="$(mktemp /tmp/homelab-talos-live-flux-sops.XXXXXX)"
+      trap 'rm -f -- "$key_file" "$live_key"' EXIT
+      kubectl --kubeconfig "$kubeconfig" --namespace flux-system get secret sops-age \
+        --output jsonpath='{.data.age\.agekey}' | base64 --decode >"$live_key"
+      chmod 600 "$live_key"
+      [[ "$(age-keygen -y "$live_key")" == "$expected_recipient" ]] || {
+        echo 'Refusing to overwrite a mismatched flux-system/sops-age Secret.' >&2
+        exit 1
+      }
+      echo "flux-system/sops-age already matches $expected_recipient; no mutation required."
+      exit 0
+    fi
+
+    [[ "${FLUX_SOPS_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to create flux-system/sops-age.' >&2
+      echo "Set FLUX_SOPS_CONFIRM='$expected_confirmation' after reviewing the target." >&2
+      exit 1
+    }
+
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system create secret generic sops-age \
+      --from-file=age.agekey="$key_file" \
+      --dry-run=client \
+      --output yaml | kubectl --kubeconfig "$kubeconfig" apply --filename -
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system label secret sops-age \
+      app.kubernetes.io/name=sops-age \
+      app.kubernetes.io/part-of=flux \
+      --overwrite
+
+    live_key="$(mktemp /tmp/homelab-talos-live-flux-sops.XXXXXX)"
+    trap 'rm -f -- "$key_file" "$live_key"' EXIT
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system get secret sops-age \
+      --output jsonpath='{.data.age\.agekey}' | base64 --decode >"$live_key"
+    chmod 600 "$live_key"
+    [[ "$(age-keygen -y "$live_key")" == "$expected_recipient" ]]
+    echo "Flux SOPS identity installed; its public recipient matches $expected_recipient."
+
+# Adopt the healthy bootstrap Cilium release, then stage the durable Git unsuspend edit.
+flux-adopt-cilium:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    source_file='kubernetes/apps/kube-system/cilium/ks.yaml'
+    expected_confirmation='adopt:cilium:kube-system:flux'
+
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo 'Refusing Cilium adoption: begin from a clean, published checkout.' >&2
+      exit 1
+    }
+    [[ "$(yq -r '.spec.suspend' "$source_file")" == 'true' ]] || {
+      echo 'Refusing Cilium adoption: the reviewed Git source is not in its initial suspended state.' >&2
+      exit 1
+    }
+    just kube flux-validate
+    flux check --kubeconfig "$kubeconfig"
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait \
+      --for=condition=Ready kustomization/cluster-apps --timeout=5m
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization cilium --output jsonpath='{.spec.suspend}')" == 'true' ]]
+
+    expected_recipient="$(yq -r '.creation_rules[] | select(.path_regex | test("kubernetes")) | .age' .sops.yaml)"
+    live_key="$(mktemp /tmp/homelab-talos-adopt-flux-sops.XXXXXX)"
+    before_pods="$(mktemp /tmp/homelab-talos-adopt-cilium-before.XXXXXX)"
+    after_pods="$(mktemp /tmp/homelab-talos-adopt-cilium-after.XXXXXX)"
+    source_backup="$(mktemp /tmp/homelab-talos-adopt-cilium-source.XXXXXX)"
+    cp -- "$source_file" "$source_backup"
+    adoption_complete=false
+    cleanup_adoption() {
+      if [[ "$adoption_complete" != 'true' ]]; then
+        cp -- "$source_backup" "$source_file"
+      fi
+      rm -f -- "$live_key" "$before_pods" "$after_pods" "$source_backup"
+    }
+    trap cleanup_adoption EXIT
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system get secret sops-age \
+      --output jsonpath='{.data.age\.agekey}' | base64 --decode >"$live_key"
+    chmod 600 "$live_key"
+    [[ "$(age-keygen -y "$live_key")" == "$expected_recipient" ]]
+
+    just kube cilium-status
+    kubectl --kubeconfig "$kubeconfig" --namespace kube-system get pods \
+      --selector app.kubernetes.io/part-of=cilium \
+      --output json | yq -r '.items[] | [.metadata.name, .metadata.uid, ([.status.containerStatuses[].restartCount] | add)] | @tsv' | sort >"$before_pods"
+    old_revision="$(helm list --namespace kube-system --kubeconfig "$kubeconfig" --output json | yq -r '.[] | select(.name == "cilium") | .revision')"
+
+    [[ "${FLUX_CILIUM_ADOPTION_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to transfer Cilium reconciliation to Flux.' >&2
+      echo "Set FLUX_CILIUM_ADOPTION_CONFIRM='$expected_confirmation' after reviewing the Flux and Cilium status." >&2
+      exit 1
+    }
+
+    yq --inplace '.spec.suspend = false' "$source_file"
+    flux resume kustomization cilium --namespace flux-system --kubeconfig "$kubeconfig"
+    flux reconcile kustomization cilium \
+      --namespace flux-system \
+      --with-source \
+      --kubeconfig "$kubeconfig" \
+      --timeout 10m
+    kubectl --kubeconfig "$kubeconfig" --namespace kube-system wait \
+      --for=condition=Ready helmrelease/cilium --timeout=10m
+
+    kubectl --kubeconfig "$kubeconfig" --namespace kube-system get pods \
+      --selector app.kubernetes.io/part-of=cilium \
+      --output json | yq -r '.items[] | [.metadata.name, .metadata.uid, ([.status.containerStatuses[].restartCount] | add)] | @tsv' | sort >"$after_pods"
+    cmp -s "$before_pods" "$after_pods" || {
+      echo 'Cilium pod identity or restart counts changed during adoption.' >&2
+      diff -u "$before_pods" "$after_pods" || true
+      exit 1
+    }
+    new_revision="$(helm list --namespace kube-system --kubeconfig "$kubeconfig" --output json | yq -r '.[] | select(.name == "cilium") | .revision')"
+    [[ "$new_revision" -gt "$old_revision" ]] || {
+      echo "Expected a Helm adoption revision after $old_revision; found $new_revision." >&2
+      exit 1
+    }
+    just kube cilium-postflight
+    adoption_complete=true
+
+    echo "Cilium adoption passed without a pod rollout; Helm revision advanced from $old_revision to $new_revision."
+    echo "Review $source_file, then commit and push its suspend=false change before running just kube flux-verify."

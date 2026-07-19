@@ -37,6 +37,10 @@ handoff was unlinked after the operator confirmed storage.
 | GitHub CLI | 2.96.0 |
 | Gitleaks | 8.30.1 |
 
+This table records the Phase 1 tool gate. Flux was deliberately upgraded from
+`2.9.1` to `2.9.2` as part of the reviewed Phase 6 bootstrap implementation; the
+current authoritative versions are `.mise.toml` and `mise.lock`.
+
 The lockfile records 91 artifacts for seven platform targets. The mise Aqua
 registry selected an Intel-only macOS `yq` artifact, so `yq` uses mise's GitHub
 backend to select and attest the native ARM64 upstream artifact instead.

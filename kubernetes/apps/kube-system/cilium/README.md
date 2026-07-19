@@ -14,8 +14,10 @@ the Helm release before Flux exists; Phase 6 has Flux adopt that same release.
 
 The bootstrap recipe passes `values.yaml` directly to Helm. The app
 Kustomization turns the same file into the watched `cilium-values` ConfigMap used
-by the future HelmRelease. Do not duplicate values in the HelmRelease or commit
-rendered chart manifests.
+by the HelmRelease. Phase 6 first publishes this Kustomization suspended and with
+orphan/prune protection. `just bootstrap flux-adopt-cilium` verifies a no-rollout
+ownership transfer and stages the durable unsuspend change. Do not duplicate
+values in the HelmRelease or commit rendered chart manifests.
 
 The initial network uses IPv4 VXLAN tunneling. Native routing, BGP, Cilium L2
 announcements, BIG TCP, BBR, netkit, DSR, Maglev, Gateway API, and Cilium Envoy

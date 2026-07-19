@@ -7,6 +7,10 @@ cilium_version := "1.19.6"
 cilium_values := "kubernetes/apps/kube-system/cilium/app/values.yaml"
 cilium_app := "kubernetes/apps/kube-system/cilium/app"
 kubeconfig := "kubeconfig"
+flux_version := "2.9.2"
+flux_path := "kubernetes/flux/clusters/prod"
+github_owner := "7yXwscXEzv6phzUnKfrw"
+github_repository := "homelab-talos"
 
 # Render the pinned Cilium chart to standard output without writing generated YAML.
 cilium-render:
@@ -266,3 +270,236 @@ cilium-verify:
     trap - EXIT
     rm -rf -- "$diagnostic_dir"
     echo 'Phase 5 verification passed: Cilium 1.19.6, three Ready nodes, healthy DNS, Hubble, connectivity, Talos, and etcd.'
+
+# Validate the complete local Phase 6 source and pinned OCI render without mutating the cluster.
+flux-validate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    expected_flux='{{flux_version}}'
+    expected_recipient="$(yq -r '.creation_rules[] | select(.path_regex | test("kubernetes")) | .age' .sops.yaml)"
+    temp_dir="$(mktemp -d /tmp/homelab-talos-flux-validate.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+
+    for file in \
+      '{{flux_path}}/apps.yaml' \
+      'kubernetes/apps/kustomization.yaml' \
+      'kubernetes/apps/flux-system/kustomization.yaml' \
+      'kubernetes/apps/flux-system/flux-canary/ks.yaml' \
+      'kubernetes/apps/flux-system/flux-canary/app/kustomization.yaml' \
+      'kubernetes/apps/flux-system/flux-canary/app/secret.sops.yaml' \
+      'kubernetes/apps/kube-system/kustomization.yaml' \
+      'kubernetes/apps/kube-system/cilium/ks.yaml'; do
+      [[ -f "$file" ]] || {
+        echo "Missing required Flux source: $file" >&2
+        exit 1
+      }
+    done
+
+    [[ "$(flux version --client | awk '{print $2}' | sed 's/^v//')" == "$expected_flux" ]]
+    [[ "$(yq -r '.creation_rules[] | select(.path_regex | test("kubernetes")) | .encrypted_regex' .sops.yaml)" == '^(data|stringData)$' ]]
+    [[ "$expected_recipient" == age1* ]]
+
+    canary='kubernetes/apps/flux-system/flux-canary/app/secret.sops.yaml'
+    [[ "$(sops filestatus "$canary" | yq -r '.encrypted')" == 'true' ]]
+    [[ "$(yq -r '.sops.age[].recipient' "$canary" | sort -u)" == "$expected_recipient" ]]
+    [[ "$(yq -r '.kind' "$canary")" == 'Secret' ]]
+    [[ "$(yq -r '.metadata.name' "$canary")" == 'flux-canary' ]]
+    [[ "$(yq -r '.stringData.marker' "$canary")" != 'ready' ]]
+
+    root='{{flux_path}}/apps.yaml'
+    [[ "$(yq -r '.metadata.name' "$root")" == 'cluster-apps' ]]
+    [[ "$(yq -r '.spec.path' "$root")" == './kubernetes/apps' ]]
+    [[ "$(yq -r '.spec.sourceRef.name' "$root")" == 'flux-system' ]]
+    [[ "$(yq -r '.spec.deletionPolicy' "$root")" == 'Orphan' ]]
+
+    cilium='kubernetes/apps/kube-system/cilium/ks.yaml'
+    [[ "$(yq -r '.metadata.annotations."kustomize.toolkit.fluxcd.io/prune"' "$cilium")" == 'disabled' ]]
+    [[ "$(yq -r '.spec.deletionPolicy' "$cilium")" == 'Orphan' ]]
+    [[ "$(yq -r '.spec.decryption.provider' "$cilium")" == 'sops' ]]
+    [[ "$(yq -r '.spec.decryption.secretRef.name' "$cilium")" == 'sops-age' ]]
+    cilium_suspend="$(yq -r '.spec.suspend // false' "$cilium")"
+    [[ "$cilium_suspend" == 'true' || "$cilium_suspend" == 'false' ]]
+    [[ "$(yq -r '.metadata.annotations."kustomize.toolkit.fluxcd.io/prune"' kubernetes/apps/kube-system/cilium/app/helmrelease.yaml)" == 'disabled' ]]
+
+    canary_ks='kubernetes/apps/flux-system/flux-canary/ks.yaml'
+    [[ "$(yq -r '.spec.dependsOn[0].name' "$canary_ks")" == 'cilium' ]]
+    [[ "$(yq -r '.spec.decryption.provider' "$canary_ks")" == 'sops' ]]
+    [[ "$(yq -r '.spec.decryption.secretRef.name' "$canary_ks")" == 'sops-age' ]]
+
+    kustomize build kubernetes/apps >"$temp_dir/apps.yaml"
+    kustomize build kubernetes/apps/kube-system >"$temp_dir/kube-system.yaml"
+    kustomize build kubernetes/apps/flux-system >"$temp_dir/flux-system.yaml"
+    kustomize build kubernetes/apps/kube-system/cilium/app >"$temp_dir/cilium.yaml"
+    kustomize build kubernetes/apps/flux-system/flux-canary/app >"$temp_dir/canary.yaml"
+
+    [[ "$(yq ea -r 'select(.kind == "Kustomization") | .metadata.name' "$temp_dir/apps.yaml" | sort)" == $'cilium\nflux-canary' ]]
+    [[ -z "$(rg 'apiVersion: .+/(v1beta1|v1beta2|v2beta1|v2beta2)' kubernetes --glob '*.yaml' || true)" ]]
+
+    just kube cilium-validate
+    echo "Flux $expected_flux source, SOPS canary, dependency graph, and Cilium adoption guards passed validation."
+
+# Check the live cluster and Git publication boundary before GitHub bootstrap.
+flux-preflight: flux-validate
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='{{kubeconfig}}'
+    owner='{{github_owner}}'
+    repository='{{github_repository}}'
+    expected_origin="git@github.com:${owner}/${repository}.git"
+
+    [[ -f "$kubeconfig" ]] || {
+      echo 'Missing ignored kubeconfig; run just bootstrap verify only if it must be refreshed.' >&2
+      exit 1
+    }
+    [[ "$(git branch --show-current)" == 'main' ]] || {
+      echo 'Refusing Flux bootstrap: the checked-out branch is not main.' >&2
+      exit 1
+    }
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo 'Refusing Flux bootstrap: commit and push the reviewed Phase 6 sources first.' >&2
+      exit 1
+    }
+    [[ "$(git remote get-url origin)" == "$expected_origin" ]] || {
+      echo "Refusing Flux bootstrap: origin must be $expected_origin." >&2
+      exit 1
+    }
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    [[ "$remote_head" == "$(git rev-parse HEAD)" ]] || {
+      echo 'Refusing Flux bootstrap: local HEAD and origin/main differ.' >&2
+      exit 1
+    }
+    [[ "$(kubectl --kubeconfig "$kubeconfig" config view --minify --output jsonpath='{.clusters[0].cluster.server}')" == 'https://192.168.90.20:6443' ]]
+
+    just kube cilium-status
+    just kube cilium-postflight
+    flux check --pre --kubeconfig "$kubeconfig"
+
+    if ! kubectl --kubeconfig "$kubeconfig" --namespace flux-system get deployment source-controller >/dev/null 2>&1; then
+      [[ "$(yq -r '.spec.suspend' kubernetes/apps/kube-system/cilium/ks.yaml)" == 'true' ]] || {
+        echo 'Refusing first bootstrap: Cilium must begin suspended for staged adoption.' >&2
+        exit 1
+      }
+    fi
+
+    echo 'Flux preflight passed: Git is published, Cilium is healthy, and Kubernetes is compatible.'
+
+# Print the read-only Flux reconciliation and controller state.
+flux-status:
+    #!/usr/bin/env bash
+    set -u
+
+    kubeconfig='{{kubeconfig}}'
+    status=0
+    [[ -f "$kubeconfig" ]] || {
+      echo 'Missing ignored kubeconfig.' >&2
+      exit 1
+    }
+
+    echo '=== Flux installation ==='
+    flux check --kubeconfig "$kubeconfig" || status=1
+    echo '=== Git sources ==='
+    flux get sources git --all-namespaces --kubeconfig "$kubeconfig" || status=1
+    echo '=== OCI sources ==='
+    flux get sources oci --all-namespaces --kubeconfig "$kubeconfig" || status=1
+    echo '=== Kustomizations ==='
+    flux get kustomizations --all-namespaces --show-source --kubeconfig "$kubeconfig" || status=1
+    echo '=== Helm releases ==='
+    flux get helmreleases --all-namespaces --kubeconfig "$kubeconfig" || status=1
+    echo '=== Flux workloads ==='
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system get deployments,pods --output wide || status=1
+    exit "$status"
+
+# Verify final Phase 6 ownership, source, SOPS, canary, and Cilium health.
+flux-verify: flux-validate
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='{{kubeconfig}}'
+    expected_recipient="$(yq -r '.creation_rules[] | select(.path_regex | test("kubernetes")) | .age' .sops.yaml)"
+    expected_url='ssh://git@github.com/{{github_owner}}/{{github_repository}}'
+    temp_key="$(mktemp /tmp/homelab-talos-flux-age.XXXXXX)"
+    trap 'rm -f -- "$temp_key"' EXIT
+
+    flux check --kubeconfig "$kubeconfig"
+    for deployment in source-controller kustomize-controller helm-controller notification-controller; do
+      available="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get deployment "$deployment" --output jsonpath='{.status.availableReplicas}')"
+      [[ "$available" == '1' ]] || {
+        echo "$deployment does not have exactly one available replica." >&2
+        exit 1
+      }
+    done
+
+    source_json="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get gitrepository flux-system --output json)"
+    [[ "$(yq -r '.spec.url' - <<<"$source_json")" == "$expected_url" ]]
+    [[ "$(yq -r '.spec.ref.branch' - <<<"$source_json")" == 'main' ]]
+    [[ "$(yq -r '[.status.conditions[] | select(.type == "Ready") | .status][0]' - <<<"$source_json")" == 'True' ]]
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    artifact_revision="$(yq -r '.status.artifact.revision' - <<<"$source_json")"
+    [[ "$artifact_revision" == *"$remote_head" ]] || {
+      echo "Flux artifact $artifact_revision has not reconciled origin/main at $remote_head." >&2
+      exit 1
+    }
+
+    for name in flux-system cluster-apps cilium flux-canary; do
+      kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait \
+        --for=condition=Ready "kustomization/$name" --timeout=10m
+      state="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization "$name" --output json)"
+      [[ "$(yq -r '[.status.conditions[] | select(.type == "Ready") | .status][0]' - <<<"$state")" == 'True' ]] || {
+        echo "Flux Kustomization $name is not Ready." >&2
+        exit 1
+      }
+      [[ "$(yq -r '.spec.suspend // false' - <<<"$state")" == 'false' ]]
+    done
+
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system get secret sops-age \
+      --output jsonpath='{.data.age\.agekey}' | base64 --decode >"$temp_key"
+    chmod 600 "$temp_key"
+    [[ "$(age-keygen -y "$temp_key")" == "$expected_recipient" ]]
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get secret flux-canary --output jsonpath='{.data.marker}' | base64 --decode)" == 'ready' ]]
+
+    source_secret_keys="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get secret flux-system --output json | yq -r '.data | keys | .[]' | sort)"
+    [[ "$source_secret_keys" == $'identity\nidentity.pub\nknown_hosts' ]] || {
+      echo "Unexpected Flux source credential fields: $source_secret_keys" >&2
+      exit 1
+    }
+
+    cilium_source="$(kubectl --kubeconfig "$kubeconfig" --namespace kube-system get ocirepository cilium --output json)"
+    [[ "$(yq -r '.spec.ref.tag' - <<<"$cilium_source")" == '{{cilium_version}}' ]]
+    [[ "$(yq -r '[.status.conditions[] | select(.type == "Ready") | .status][0]' - <<<"$cilium_source")" == 'True' ]]
+    cilium_release="$(kubectl --kubeconfig "$kubeconfig" --namespace kube-system get helmrelease cilium --output json)"
+    [[ "$(yq -r '[.status.conditions[] | select(.type == "Ready") | .status][0]' - <<<"$cilium_release")" == 'True' ]]
+    [[ "$(yq -r '.spec.releaseName' - <<<"$cilium_release")" == 'cilium' ]]
+
+    just kube cilium-postflight
+    echo 'Phase 6 verification passed: Flux, SSH source auth, SOPS, canary reconciliation, and Cilium ownership are healthy.'
+
+# Delete only the permanent canary and prove Flux recreates it from encrypted Git source.
+flux-canary-test: flux-verify
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='{{kubeconfig}}'
+    expected_confirmation='recreate:flux-system:flux-canary'
+    [[ "${FLUX_CANARY_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to delete the Flux reconciliation canary.' >&2
+      echo "Set FLUX_CANARY_CONFIRM='$expected_confirmation' after reviewing the target." >&2
+      exit 1
+    }
+
+    old_uid="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get secret flux-canary \
+      --selector app.kubernetes.io/component=reconciliation-canary \
+      --output jsonpath='{.items[0].metadata.uid}')"
+    [[ -n "$old_uid" ]]
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system delete secret flux-canary \
+      --wait=true
+    flux reconcile kustomization flux-canary \
+      --namespace flux-system \
+      --with-source \
+      --kubeconfig "$kubeconfig" \
+      --timeout 5m
+    new_uid="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get secret flux-canary --output jsonpath='{.metadata.uid}')"
+    [[ -n "$new_uid" && "$new_uid" != "$old_uid" ]]
+    just kube flux-verify
+    echo 'Flux canary recreation passed with a new Secret UID.'

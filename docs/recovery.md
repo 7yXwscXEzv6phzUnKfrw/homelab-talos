@@ -51,5 +51,51 @@ The recipe verifies the age identity, renders `clusterconfig/nuc1.yaml` through
 policy validation. These outputs and the later kubeconfig remain ignored. Never
 recover them by committing plaintext copies.
 
-Phase-specific rebuild and recovery evidence is maintained under `docs/`. Flux
-recovery procedures will be added when Flux is implemented and tested.
+Phase-specific rebuild and recovery evidence is maintained under `docs/`.
+
+## Recover Flux Source Access
+
+Flux runtime Git access uses the private key in the
+`flux-system/flux-system` Secret and a matching read-only GitHub deploy key. The
+bootstrap PAT is not stored in the cluster and is not needed for normal
+reconciliation.
+
+If the deploy key is deleted from GitHub or its cluster Secret is lost, load the
+repository-scoped fine-grained PAT, run the read-only preflight, and rerun the
+guarded bootstrap workflow. Its `--reconcile` behavior restores the canonical
+Flux `2.9.2` manifests and matching read-only SSH key without granting Git write
+access:
+
+```bash
+export GITHUB_TOKEN='github_pat_...'
+export FLUX_BOOTSTRAP_CONFIRM='bootstrap:flux:prod:7yXwscXEzv6phzUnKfrw/homelab-talos:read-only'
+mise exec -- just kube flux-preflight
+mise exec -- just bootstrap flux
+unset FLUX_BOOTSTRAP_CONFIRM GITHUB_TOKEN
+```
+
+If the PAT itself is lost, create a replacement with repository Administration
+and Contents read/write access. Replacing or removing that PAT has no effect on
+running Flux after the SSH deploy key exists.
+
+## Recover Flux SOPS Access
+
+If `flux-system/sops-age` is absent but the password-manager identity remains
+available, recreate it through the guarded workflow:
+
+```bash
+export SOPS_AGE_KEY='AGE-SECRET-KEY-...'
+export FLUX_SOPS_CONFIRM='create:flux-system:sops-age'
+mise exec -- just bootstrap flux-sops
+unset FLUX_SOPS_CONFIRM SOPS_AGE_KEY
+```
+
+The recipe refuses to overwrite a Secret that derives a different public
+recipient. That condition is a rotation, not ordinary recovery: stop, preserve
+the old key, re-encrypt every affected SOPS document for the planned recipient,
+and add a dedicated reviewed rotation workflow before changing the live Secret.
+Do not delete a still-needed identity or perform an ad hoc `kubectl` overwrite.
+
+After either recovery, use `just kube flux-status`, `just kube flux-verify`, and
+the confirmed `just kube flux-canary-test` gate described in
+[`phase-6-flux.md`](phase-6-flux.md).

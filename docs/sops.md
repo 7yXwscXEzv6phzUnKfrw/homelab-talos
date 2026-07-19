@@ -39,5 +39,9 @@ doing so creates a different cluster identity.
 
 `just talos generate` requires `SOPS_AGE_KEY` or `SOPS_AGE_KEY_FILE`, verifies the
 loaded identity with `just repo secrets`, and lets Talhelper decrypt the tracked
-bundle while rendering ignored output. Flux decryption configuration arrives with
-Flux bootstrap, not during Phase 2.
+bundle while rendering ignored output. During Phase 6,
+`just bootstrap flux-sops` validates the same identity and creates
+`flux-system/sops-age` without exposing the private key in Git or command output.
+An existing matching Secret is left unchanged; a mismatched Secret is never
+overwritten by that workflow. The permanent encrypted `flux-canary` Secret proves
+that in-cluster decryption remains functional.
