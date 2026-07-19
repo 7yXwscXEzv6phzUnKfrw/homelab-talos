@@ -418,7 +418,7 @@ flux-verify: flux-validate
 
     kubeconfig='{{kubeconfig}}'
     expected_recipient="$(yq -r '.creation_rules[] | select(.path_regex | test("kubernetes")) | .age' .sops.yaml)"
-    expected_url='ssh://git@github.com/{{github_owner}}/{{github_repository}}'
+    expected_url='ssh://git@ssh.github.com:443/{{github_owner}}/{{github_repository}}'
     temp_key="$(mktemp /tmp/homelab-talos-flux-age.XXXXXX)"
     trap 'rm -f -- "$temp_key"' EXIT
 

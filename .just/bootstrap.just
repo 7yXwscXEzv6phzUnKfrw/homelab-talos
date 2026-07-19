@@ -522,6 +522,7 @@ flux:
       --branch main \
       --path kubernetes/flux/clusters/prod \
       --read-write-key=false \
+      --ssh-hostname ssh.github.com:443 \
       --ssh-key-algorithm ed25519 \
       --interval 1m \
       --network-policy=true \
@@ -654,6 +655,10 @@ flux-adopt-cilium:
       --selector app.kubernetes.io/part-of=cilium \
       --output json | yq -r '.items[] | .metadata.name + "\t" + .metadata.uid + "\t" + ([.status.containerStatuses[].restartCount] | join(","))' | sort >"$before_pods"
     old_revision="$(helm list --namespace kube-system --kubeconfig "$kubeconfig" --output json | yq -r '.[] | select(.name == "cilium") | .revision')"
+    flux_release_existed=false
+    if kubectl --kubeconfig "$kubeconfig" --namespace kube-system get helmrelease cilium >/dev/null 2>&1; then
+      flux_release_existed=true
+    fi
 
     [[ "${FLUX_CILIUM_ADOPTION_CONFIRM:-}" == "$expected_confirmation" ]] || {
       echo 'Refusing to transfer Cilium reconciliation to Flux.' >&2
@@ -674,18 +679,35 @@ flux-adopt-cilium:
     kubectl --kubeconfig "$kubeconfig" --namespace kube-system get pods \
       --selector app.kubernetes.io/part-of=cilium \
       --output json | yq -r '.items[] | .metadata.name + "\t" + .metadata.uid + "\t" + ([.status.containerStatuses[].restartCount] | join(","))' | sort >"$after_pods"
-    cmp -s "$before_pods" "$after_pods" || {
-      echo 'Cilium pod identity or restart counts changed during adoption.' >&2
-      diff -u "$before_pods" "$after_pods" || true
-      exit 1
-    }
     new_revision="$(helm list --namespace kube-system --kubeconfig "$kubeconfig" --output json | yq -r '.[] | select(.name == "cilium") | .revision')"
-    [[ "$new_revision" -gt "$old_revision" ]] || {
-      echo "Expected a Helm adoption revision after $old_revision; found $new_revision." >&2
-      exit 1
-    }
+    if [[ "$flux_release_existed" == 'true' ]]; then
+      [[ "$new_revision" == "$old_revision" ]] || {
+        echo "Recovered adoption unexpectedly changed Helm revision $old_revision to $new_revision." >&2
+        exit 1
+      }
+      cmp -s "$before_pods" "$after_pods" || {
+        echo 'Recovered adoption unexpectedly changed Cilium pod identity or restart counts.' >&2
+        diff -u "$before_pods" "$after_pods" || true
+        exit 1
+      }
+    else
+      [[ "$new_revision" -gt "$old_revision" ]] || {
+        echo "Expected a Helm adoption revision after $old_revision; found $new_revision." >&2
+        exit 1
+      }
+      restarted_pods="$(awk -F '\t' '$3 !~ /^0(,0)*$/ {print $1 "=" $3}' "$after_pods")"
+      [[ -z "$restarted_pods" ]] || {
+        echo "Cilium containers restarted during adoption: $restarted_pods" >&2
+        exit 1
+      }
+    fi
+    just kube cilium-status
     just kube cilium-postflight
     adoption_complete=true
 
-    echo "Cilium adoption passed without a pod rollout; Helm revision advanced from $old_revision to $new_revision."
+    if [[ "$flux_release_existed" == 'true' ]]; then
+      echo "Recovered Cilium adoption passed without another rollout; Helm revision remains $new_revision."
+    else
+      echo "Cilium adoption passed with healthy zero-restart workloads; Helm revision advanced from $old_revision to $new_revision."
+    fi
     echo "Review $source_file, then commit and push its suspend=false change before running just kube flux-verify."

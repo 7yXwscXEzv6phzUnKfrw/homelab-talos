@@ -5,7 +5,7 @@
 - Prepared: 2026-07-19
 - State: Declarative sources and guarded workflows implemented; live bootstrap pending operator credentials
 - Flux CLI and controllers: `2.9.2`
-- Git source: `ssh://git@github.com/7yXwscXEzv6phzUnKfrw/homelab-talos`
+- Git source: `ssh://git@ssh.github.com:443/7yXwscXEzv6phzUnKfrw/homelab-talos`
 - Sync path: `kubernetes/flux/clusters/prod`
 - Branch and polling: `main`, one minute
 
@@ -75,11 +75,18 @@ and HelmRelease carry prune-disable annotations, and the child uses
 Git deletion from removing the running network.
 
 The adoption recipe verifies the existing chart and values, records every Cilium
-pod UID and restart total, resumes only the `cilium` Kustomization, waits for its
-HelmRelease, and requires the Helm revision to advance without changing those pod
-records. It then changes the tracked source to `suspend: false`; that local diff
-is an explicit review and commit boundary. A Helm revision increase is expected
-during ownership transfer. A Cilium pod replacement or restart is not.
+pod UID and restart total, resumes only the `cilium` Kustomization, and waits for
+its HelmRelease. The initial transfer advances the Helm revision and can perform
+a controlled replacement because Helm Controller adds ownership metadata and
+regenerates chart-managed certificate material; every resulting workload must be
+Ready with zero container restarts. A recovered or repeated adoption must not
+advance the revision or replace pods again. The recipe then changes the tracked
+source to `suspend: false`; that local diff is an explicit review and commit
+boundary.
+
+The cluster Git source uses GitHub's SSH-over-HTTPS endpoint
+`ssh.github.com:443`. This retains the repository-scoped read-only deploy key
+while avoiding networks that time out outbound SSH port 22.
 
 The permanent encrypted canary depends on Cilium. It cannot become Ready until
 the SOPS key exists and Cilium adoption succeeds.
@@ -149,7 +156,9 @@ Phase 6 is complete only when live evidence records all of the following:
 - `flux-system`, `cluster-apps`, `cilium`, and `flux-canary` are Ready and unsuspended.
 - The live SOPS identity derives the repository's committed public recipient.
 - The encrypted canary decrypts to marker `ready`.
-- Cilium adoption advances the Helm revision without replacing or restarting pods.
+- Cilium adoption advances the Helm revision, returns every controlled
+  replacement to Ready with zero container restarts, and repeated reconciliation
+  causes no further rollout.
 - The canary recreation test produces a different Secret UID.
 - Cilium, Talos diagnostics, and etcd postflight checks still pass.
 

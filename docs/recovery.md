@@ -58,7 +58,9 @@ Phase-specific rebuild and recovery evidence is maintained under `docs/`.
 Flux runtime Git access uses the private key in the
 `flux-system/flux-system` Secret and a matching read-only GitHub deploy key. The
 bootstrap PAT is not stored in the cluster and is not needed for normal
-reconciliation.
+reconciliation. The canonical source endpoint is
+`ssh://git@ssh.github.com:443/7yXwscXEzv6phzUnKfrw/homelab-talos`; GitHub's SSH
+port 443 avoids environments that block or time out port 22.
 
 If the deploy key is deleted from GitHub or its cluster Secret is lost, load the
 repository-scoped fine-grained PAT, run the read-only preflight, and rerun the
