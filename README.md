@@ -113,7 +113,7 @@ available for focused developer validation.
 | `just bootstrap talos` | Guard and bootstrap etcd exactly once on nuc1 | Enabled in Phase 4; destructive after confirmation |
 | `just bootstrap status [node]` | Print read-only etcd membership, service, discovery, and recent logs; optionally select one node | Enabled in Phase 4; diagnostic |
 | `just bootstrap retry-join <node>` | Guard and reboot a failed nuc2/nuc3 etcd join without re-bootstrap | Enabled in Phase 4; mutating after confirmation |
-| `just bootstrap verify` | Verify etcd/Kubernetes/Talos and refresh ignored kubeconfig | Enabled in Phase 4 |
+| `just bootstrap verify` | Verify the pre-Cilium etcd/Kubernetes/Talos gate and refresh ignored kubeconfig | Historical Phase 4 gate; do not use after Cilium |
 | `just kube cilium-render` | Render the pinned Cilium OCI chart to standard output | Enabled in Phase 5; read-only |
 | `just kube cilium-validate` | Validate Cilium sources, values, and the Helm render | Enabled in Phase 5; read-only |
 | `just kube cilium-status` | Print Helm, node, pod, and Cilium status | Enabled in Phase 5; read-only |
@@ -133,6 +133,58 @@ is recorded in [`docs/phase-3-installation.md`](docs/phase-3-installation.md).
 The Cilium ownership boundary, exact confirmation, connectivity test, and Phase 5
 evidence are documented in
 [`docs/phase-5-cilium.md`](docs/phase-5-cilium.md).
+
+## Daily Cluster Health Check
+
+From the repository root, run these two read-only checks:
+
+```bash
+mise exec -- just kube cilium-status
+mise exec -- just kube cilium-postflight
+```
+
+If the mise environment is already activated, omit `mise exec --`. A healthy
+result shows:
+
+- Helm release `cilium` deployed at `1.19.6`.
+- `nuc1`, `nuc2`, and `nuc3` in Kubernetes `Ready` state.
+- Three ready Cilium agents, two ready operators, and one ready Hubble Relay.
+- Cilium and Hubble reporting `OK` without crash loops or an unexpected restart
+  increase.
+- No temporary `cilium-test*` namespaces.
+- No Talos diagnostics on any node.
+- Three etcd members and no etcd alarms.
+
+If either command fails, use the read-only checks in this order:
+
+```bash
+# Focused Talos diagnostic resources from every node
+mise exec -- just kube cilium-diagnostics
+
+# Etcd membership, Talos service state, discovery, and recent logs
+mise exec -- just bootstrap status
+
+# Limit the detailed output to one node when the failure is localized
+mise exec -- just bootstrap status nuc1
+```
+
+Run the full functional network suite after a networking change or when the
+status checks cannot explain a connectivity problem:
+
+```bash
+mise exec -- just kube cilium-verify
+```
+
+The full verifier takes approximately 15–20 minutes. It creates temporary test
+workloads, exercises DNS, services, policy, FQDN, L7, pod, node, and cross-node
+traffic, and removes the test resources afterward. `just kube cilium-validate`
+and `just repo verify` validate local declarative sources; they do not establish
+live cluster health.
+
+Do not use `just bootstrap verify` as a routine check after Cilium is installed.
+It is the historical Phase 4 pre-CNI gate and intentionally expects all nodes to
+be `NotReady`. Do not use `just bootstrap cilium` as a status command because it
+is an installation/reconciliation workflow with a guarded mutation path.
 
 ## Secret Access
 

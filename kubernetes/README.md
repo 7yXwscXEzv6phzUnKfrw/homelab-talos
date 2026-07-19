@@ -61,7 +61,7 @@ All supported Cilium workflows are Just recipes:
 | `just kube cilium-validate` | Validate the app package, canonical values, and rendered chart |
 | `just kube cilium-status` | Print read-only Helm, node, pod, and Cilium status |
 | `just kube cilium-diagnostics` | Print read-only Talos diagnostics from all cluster nodes |
-| `just kube cilium-postflight` | Verify Talos diagnostics and etcd health after connectivity tests |
+| `just kube cilium-postflight` | Verify test cleanup, Talos diagnostics, and etcd health for routine or post-test checks |
 | `just kube cilium-verify` | Run the live Phase 5 gate and temporary connectivity workloads |
 | `just bootstrap cilium` | Guard and install or reconcile the bootstrap Helm release |
 
