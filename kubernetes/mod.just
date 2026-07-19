@@ -347,7 +347,7 @@ flux-preflight: flux-validate
     kubeconfig='{{kubeconfig}}'
     owner='{{github_owner}}'
     repository='{{github_repository}}'
-    expected_origin="git@github.com:${owner}/${repository}.git"
+    expected_origin="https://github.com/${owner}/${repository}.git"
 
     [[ -f "$kubeconfig" ]] || {
       echo 'Missing ignored kubeconfig; run just bootstrap verify only if it must be refreshed.' >&2
