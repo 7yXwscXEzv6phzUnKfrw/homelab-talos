@@ -589,7 +589,7 @@ foundation-validate:
     [[ "$(yq -r '.frrk8s.enabled' "$metallb_values")" == 'false' ]]
     [[ "$(yq -r '.speaker.frr.enabled' "$metallb_values")" == 'false' ]]
     pool='kubernetes/apps/networking/metallb/config/address-pool.yaml'
-    [[ "$(yq ea -r 'select(.kind == "IPAddressPool") | .spec.addresses[0]' "$pool")" == '192.168.90.100-192.168.90.110' ]]
+    [[ "$(yq ea -r 'select(.kind == "IPAddressPool") | .spec.addresses[0]' "$pool")" == '192.168.90.40-192.168.90.47' ]]
     [[ "$(yq ea -r 'select(.kind == "IPAddressPool") | .spec.autoAssign' "$pool")" == 'false' ]]
 
     gateway='kubernetes/apps/networking/internal-gateway/app/gateway.yaml'
@@ -598,7 +598,7 @@ foundation-validate:
     [[ "$(yq ea -r 'select(.kind == "Gateway") | .spec.listeners[0].tls.certificateRefs[0].name' "$gateway")" == 'wildcard-lab-supermorphic-com-tls' ]]
     proxy='kubernetes/apps/networking/internal-gateway/app/envoyproxy.yaml'
     [[ "$(yq -r '.spec.provider.kubernetes.envoyDeployment.replicas' "$proxy")" == '2' ]]
-    [[ "$(yq -r '.spec.provider.kubernetes.envoyService.annotations."metallb.io/loadBalancerIPs"' "$proxy")" == '192.168.90.101' ]]
+    [[ "$(yq -r '.spec.provider.kubernetes.envoyService.annotations."metallb.io/loadBalancerIPs"' "$proxy")" == '192.168.90.40' ]]
     [[ "$(yq -r '.spec.provider.kubernetes.envoyService.externalTrafficPolicy' "$proxy")" == 'Local' ]]
 
     dns_values='kubernetes/apps/networking/external-dns/app/values.yaml'
@@ -746,7 +746,7 @@ foundation-verify: foundation-validate
     speaker="$(kubectl --kubeconfig "$kubeconfig" --namespace metallb-system get daemonset metallb-speaker --output json | yq -r '[.status.desiredNumberScheduled, .status.numberReady, (.status.numberUnavailable // 0)] | join(" ")')"
     [[ "$speaker" == '3 3 0' ]]
     pool="$(kubectl --kubeconfig "$kubeconfig" --namespace metallb-system get ipaddresspool internal --output json)"
-    [[ "$(yq -r '.spec.addresses | join(" ")' - <<<"$pool")" == '192.168.90.100-192.168.90.110' ]]
+    [[ "$(yq -r '.spec.addresses | join(" ")' - <<<"$pool")" == '192.168.90.40-192.168.90.47' ]]
     [[ "$(yq -r '.spec.autoAssign' - <<<"$pool")" == 'false' ]]
     ! kubectl --kubeconfig "$kubeconfig" --namespace metallb-system get daemonset frr-k8s-daemon >/dev/null 2>&1
 
@@ -754,11 +754,11 @@ foundation-verify: foundation-validate
     [[ "$(yq -r '[.status.conditions[] | select(.type == "Accepted") | .status][0]' - <<<"$gateway_class")" == 'True' ]]
     gateway="$(kubectl --kubeconfig "$kubeconfig" --namespace networking get gateway internal --output json)"
     [[ "$(yq -r '[.status.conditions[] | select(.type == "Programmed") | .status][0]' - <<<"$gateway")" == 'True' ]]
-    [[ "$(yq -r '.status.addresses[].value' - <<<"$gateway" | sort -u)" == '192.168.90.101' ]]
+    [[ "$(yq -r '.status.addresses[].value' - <<<"$gateway" | sort -u)" == '192.168.90.40' ]]
     [[ "$(yq -r '.status.listeners[] | select(.name == "https") | [.conditions[] | select(.type == "Accepted") | .status][0]' - <<<"$gateway")" == 'True' ]]
 
     envoy_services="$(kubectl --kubeconfig "$kubeconfig" --namespace networking get services --output json)"
-    envoy_service="$(yq -r '.items[] | select(.spec.type == "LoadBalancer" and (.status.loadBalancer.ingress[]?.ip == "192.168.90.101")) | .metadata.name' - <<<"$envoy_services")"
+    envoy_service="$(yq -r '.items[] | select(.spec.type == "LoadBalancer" and (.status.loadBalancer.ingress[]?.ip == "192.168.90.40")) | .metadata.name' - <<<"$envoy_services")"
     [[ -n "$envoy_service" && "$(wc -l <<<"$envoy_service" | tr -d ' ')" == '1' ]]
     envoy_deployments="$(kubectl --kubeconfig "$kubeconfig" --namespace networking get deployments --output json)"
     envoy_ready="$(yq -r '.items[] | select(.metadata.labels."gateway.envoyproxy.io/owning-gateway-name" == "internal") | [.spec.replicas, (.status.availableReplicas // 0)] | join(" ")' - <<<"$envoy_deployments")"
@@ -796,15 +796,15 @@ foundation-verify: foundation-validate
     dns_answer=''
     for attempt in {1..30}; do
       dns_answer="$(dig +short @192.168.90.2 echo.lab.supermorphic.com A | sort -u)"
-      [[ "$dns_answer" == '192.168.90.101' ]] && break
+      [[ "$dns_answer" == '192.168.90.40' ]] && break
       sleep 10
     done
-    [[ "$dns_answer" == '192.168.90.101' ]] || {
-      echo "Pi-hole returned '$dns_answer' instead of 192.168.90.101." >&2
+    [[ "$dns_answer" == '192.168.90.40' ]] || {
+      echo "Pi-hole returned '$dns_answer' instead of 192.168.90.40." >&2
       exit 1
     }
     response="$(curl --silent --show-error --fail --max-time 15 \
-      --resolve echo.lab.supermorphic.com:443:192.168.90.101 \
+      --resolve echo.lab.supermorphic.com:443:192.168.90.40 \
       https://echo.lab.supermorphic.com/)"
     [[ -n "$response" ]]
 

@@ -197,7 +197,7 @@ result shows:
   Kustomizations, and HelmReleases reporting Ready.
 - Ready staging and production issuers, the wildcard certificate, MetalLB,
   Envoy Gateway, ExternalDNS, and echo; Pi-hole resolves the echo hostname to
-  `192.168.90.101`.
+  `192.168.90.40`.
 
 If either command fails, use the read-only checks in this order:
 
