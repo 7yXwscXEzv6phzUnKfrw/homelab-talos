@@ -45,3 +45,13 @@ bundle while rendering ignored output. During Phase 6,
 An existing matching Secret is left unchanged; a mismatched Secret is never
 overwritten by that workflow. The permanent encrypted `flux-canary` Secret proves
 that in-cluster decryption remains functional.
+
+Phase 7 provider credentials are created only through
+`just repo phase7-secrets`. The workflow validates a zone-scoped Cloudflare token
+and proves a dedicated Pi-hole v6 application password can create and remove a
+temporary record over CA-verified HTTPS. It writes plaintext only inside an
+owner-readable temporary directory, encrypts each Secret for the repository
+recipient, and moves only ciphertext into the tracked application directories.
+Exact environment variables and confirmation text are documented in
+[`phase-7-foundation.md`](phase-7-foundation.md); Pi-hole reinstall and trust-
+anchor rotation are in [`pihole-integration.md`](pihole-integration.md).

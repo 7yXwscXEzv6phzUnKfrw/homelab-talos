@@ -1,0 +1,35 @@
+---
+# yaml-language-server: $schema=https://k8s-schemas.home-operations.com/helm.toolkit.fluxcd.io/helmrelease_v2.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: external-dns-internal
+  namespace: external-dns
+spec:
+  chart:
+    spec:
+      chart: external-dns
+      interval: 15m
+      sourceRef:
+        kind: HelmRepository
+        name: external-dns
+      version: 1.21.1
+  driftDetection:
+    mode: enabled
+  install:
+    remediation:
+      retries: 3
+  interval: 1h
+  releaseName: external-dns-internal
+  storageNamespace: external-dns
+  targetNamespace: external-dns
+  timeout: 10m
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+      strategy: rollback
+  valuesFrom:
+    - kind: ConfigMap
+      name: external-dns-internal-values
+      valuesKey: values.yaml

@@ -11,6 +11,14 @@ flux_version := "2.9.2"
 flux_path := "kubernetes/flux/clusters/prod"
 github_owner := "7yXwscXEzv6phzUnKfrw"
 github_repository := "homelab-talos"
+cert_manager_chart := "oci://quay.io/jetstack/charts/cert-manager"
+cert_manager_version := "v1.21.0"
+metallb_repository := "https://metallb.github.io/metallb"
+metallb_version := "0.16.1"
+envoy_gateway_chart := "oci://docker.io/envoyproxy/gateway-helm"
+envoy_gateway_version := "v1.8.2"
+external_dns_repository := "https://kubernetes-sigs.github.io/external-dns"
+external_dns_chart_version := "1.21.1"
 
 # Render the pinned Cilium chart to standard output without writing generated YAML.
 cilium-render:
@@ -342,8 +350,8 @@ flux-validate:
     kustomize build kubernetes/apps/kube-system/cilium/app >"$temp_dir/cilium.yaml"
     kustomize build kubernetes/apps/flux-system/flux-canary/app >"$temp_dir/canary.yaml"
 
-    [[ "$(yq ea -r 'select(.kind == "Kustomization") | .metadata.name' "$temp_dir/apps.yaml" | sort)" == $'cilium\nflux-canary' ]]
-    [[ -z "$(rg 'apiVersion: .+/(v1beta1|v1beta2|v2beta1|v2beta2)' kubernetes --glob '*.yaml' || true)" ]]
+    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .metadata.name] | .[]' "$temp_dir/apps.yaml" | sort -u)" == $'cert-manager\ncert-manager-config\ncilium\necho\nenvoy-gateway\nexternal-dns-internal\nflux-canary\ninternal-gateway\nmetallb\nmetallb-config\nwildcard-certificate' ]]
+    [[ -z "$(rg '^apiVersion: (apps|extensions)/v1beta|^apiVersion: (networking.k8s.io|policy)/v1beta1' kubernetes --glob '*.yaml' || true)" ]]
 
     just kube cilium-validate
     echo "Flux $expected_flux source, SOPS canary, dependency graph, and Cilium adoption guards passed validation."
@@ -483,6 +491,325 @@ flux-verify: flux-validate
 
     just kube cilium-postflight
     echo 'Phase 6 verification passed: Flux, SSH source auth, SOPS, canary reconciliation, and Cilium ownership are healthy.'
+
+# Validate the complete local Phase 7 graph, encrypted providers, and pinned chart renders.
+foundation-validate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    expected_recipient="$(yq -r '.creation_rules[] | select(.path_regex | test("kubernetes")) | .age' .sops.yaml)"
+    cloudflare_secret='kubernetes/apps/security/cert-manager/config/cloudflare-api-token.sops.yaml'
+    pihole_secret='kubernetes/apps/networking/external-dns/app/pihole-password.sops.yaml'
+    pihole_ca='kubernetes/apps/networking/external-dns/app/pihole-ca.crt'
+    temp_dir="$(mktemp -d /tmp/homelab-talos-foundation-validate.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+
+    for file in \
+      'kubernetes/apps/security/cert-manager/ks.yaml' \
+      'kubernetes/apps/security/cert-manager/app/ocirepository.yaml' \
+      'kubernetes/apps/security/cert-manager/app/helmrelease.yaml' \
+      'kubernetes/apps/security/cert-manager/app/values.yaml' \
+      'kubernetes/apps/security/cert-manager/config/clusterissuers.yaml' \
+      'kubernetes/apps/security/cert-manager/config/staging-certificate.yaml' \
+      'kubernetes/apps/security/cert-manager/certificate/certificate.yaml' \
+      'kubernetes/apps/networking/metallb/ks.yaml' \
+      'kubernetes/apps/networking/metallb/app/helmrelease.yaml' \
+      'kubernetes/apps/networking/metallb/app/values.yaml' \
+      'kubernetes/apps/networking/metallb/config/address-pool.yaml' \
+      'kubernetes/apps/networking/envoy-gateway/ks.yaml' \
+      'kubernetes/apps/networking/envoy-gateway/app/ocirepository.yaml' \
+      'kubernetes/apps/networking/envoy-gateway/app/helmrelease.yaml' \
+      'kubernetes/apps/networking/envoy-gateway/app/values.yaml' \
+      'kubernetes/apps/networking/internal-gateway/ks.yaml' \
+      'kubernetes/apps/networking/internal-gateway/app/envoyproxy.yaml' \
+      'kubernetes/apps/networking/internal-gateway/app/gateway.yaml' \
+      'kubernetes/apps/networking/external-dns/ks.yaml' \
+      'kubernetes/apps/networking/external-dns/app/helmrelease.yaml' \
+      'kubernetes/apps/networking/external-dns/app/kustomization.yaml' \
+      "$pihole_ca" \
+      'kubernetes/apps/networking/external-dns/app/values.yaml' \
+      'kubernetes/apps/testing/echo/ks.yaml' \
+      'kubernetes/apps/testing/echo/app/deployment.yaml' \
+      'kubernetes/apps/testing/echo/app/httproute.yaml' \
+      "$cloudflare_secret" \
+      "$pihole_secret"; do
+      [[ -f "$file" ]] || {
+        echo "Missing required Phase 7 source: $file" >&2
+        echo 'Run just repo phase7-secrets if a provider Secret is missing.' >&2
+        exit 1
+      }
+    done
+
+    for secret in "$cloudflare_secret" "$pihole_secret"; do
+      [[ "$(sops filestatus "$secret" | yq -r '.encrypted')" == 'true' ]]
+      [[ "$(yq -r '.sops.age[].recipient' "$secret" | sort -u)" == "$expected_recipient" ]]
+      [[ "$(yq -r '.kind' "$secret")" == 'Secret' ]]
+    done
+    [[ "$(yq -r '.metadata.name' "$cloudflare_secret")" == 'cloudflare-api-token' ]]
+    [[ "$(yq -r '.metadata.namespace' "$cloudflare_secret")" == 'cert-manager' ]]
+    [[ "$(yq -r '.metadata.name' "$pihole_secret")" == 'pihole-password' ]]
+    [[ "$(yq -r '.metadata.namespace' "$pihole_secret")" == 'external-dns' ]]
+    ! rg -q 'PRIVATE KEY' "$pihole_ca"
+    openssl verify -CAfile "$pihole_ca" "$pihole_ca" >/dev/null
+    openssl x509 -in "$pihole_ca" -noout -checkend 2592000 >/dev/null
+
+    phase7_sources=(
+      kubernetes/apps/security/cert-manager/ks.yaml
+      kubernetes/apps/networking/metallb/ks.yaml
+      kubernetes/apps/networking/envoy-gateway/ks.yaml
+      kubernetes/apps/networking/internal-gateway/ks.yaml
+      kubernetes/apps/networking/external-dns/ks.yaml
+      kubernetes/apps/testing/echo/ks.yaml
+    )
+    suspend_states="$(yq ea -r '[select(.kind == "Kustomization") | (.spec.suspend // false)] | .[]' "${phase7_sources[@]}" | sort -u)"
+    [[ "$suspend_states" == 'true' || "$suspend_states" == 'false' ]] || {
+      echo 'Every Phase 7 Kustomization must be staged together: all suspended or all active.' >&2
+      exit 1
+    }
+
+    [[ "$(yq -r '.spec.ref.tag' kubernetes/apps/security/cert-manager/app/ocirepository.yaml)" == '{{cert_manager_version}}' ]]
+    [[ "$(yq -r '.spec.url' kubernetes/apps/security/cert-manager/app/ocirepository.yaml)" == '{{cert_manager_chart}}' ]]
+    [[ "$(yq -r '.spec.chart.spec.version' kubernetes/apps/networking/metallb/app/helmrelease.yaml)" == '{{metallb_version}}' ]]
+    [[ "$(yq -r '.spec.ref.tag' kubernetes/apps/networking/envoy-gateway/app/ocirepository.yaml)" == '{{envoy_gateway_version}}' ]]
+    [[ "$(yq -r '.spec.url' kubernetes/apps/networking/envoy-gateway/app/ocirepository.yaml)" == '{{envoy_gateway_chart}}' ]]
+    [[ "$(yq -r '.spec.chart.spec.version' kubernetes/apps/networking/external-dns/app/helmrelease.yaml)" == '{{external_dns_chart_version}}' ]]
+
+    cert_ks='kubernetes/apps/security/cert-manager/ks.yaml'
+    [[ "$(yq ea -r 'select(.metadata.name == "cert-manager") | .spec.dependsOn[].name' "$cert_ks")" == 'cilium' ]]
+    [[ "$(yq ea -r 'select(.metadata.name == "cert-manager-config") | .spec.dependsOn[].name' "$cert_ks")" == 'cert-manager' ]]
+    [[ "$(yq ea -r 'select(.metadata.name == "wildcard-certificate") | .spec.dependsOn[].name' "$cert_ks")" == 'cert-manager-config' ]]
+    [[ "$(yq -r '.spec.dependsOn[].name' kubernetes/apps/networking/metallb/ks.yaml | head -n 1)" == 'cilium' ]]
+    [[ "$(yq ea -r 'select(.metadata.name == "metallb-config") | .spec.dependsOn[].name' kubernetes/apps/networking/metallb/ks.yaml)" == 'metallb' ]]
+    [[ "$(yq -r '.spec.dependsOn[].name' kubernetes/apps/networking/envoy-gateway/ks.yaml)" == 'cilium' ]]
+    [[ "$(yq -r '.spec.dependsOn[].name' kubernetes/apps/networking/internal-gateway/ks.yaml | sort)" == $'envoy-gateway\nmetallb-config\nwildcard-certificate' ]]
+    [[ "$(yq -r '.spec.dependsOn[].name' kubernetes/apps/networking/external-dns/ks.yaml)" == 'internal-gateway' ]]
+    [[ "$(yq -r '.spec.dependsOn[].name' kubernetes/apps/testing/echo/ks.yaml)" == 'external-dns-internal' ]]
+
+    metallb_values='kubernetes/apps/networking/metallb/app/values.yaml'
+    [[ "$(yq -r '.frrk8s.enabled' "$metallb_values")" == 'false' ]]
+    [[ "$(yq -r '.speaker.frr.enabled' "$metallb_values")" == 'false' ]]
+    pool='kubernetes/apps/networking/metallb/config/address-pool.yaml'
+    [[ "$(yq ea -r 'select(.kind == "IPAddressPool") | .spec.addresses[0]' "$pool")" == '192.168.90.100-192.168.90.110' ]]
+    [[ "$(yq ea -r 'select(.kind == "IPAddressPool") | .spec.autoAssign' "$pool")" == 'false' ]]
+
+    gateway='kubernetes/apps/networking/internal-gateway/app/gateway.yaml'
+    [[ "$(yq ea -r 'select(.kind == "Gateway") | .spec.listeners[0].hostname' "$gateway")" == '*.lab.supermorphic.com' ]]
+    [[ "$(yq ea -r 'select(.kind == "Gateway") | .spec.listeners[0].port' "$gateway")" == '443' ]]
+    [[ "$(yq ea -r 'select(.kind == "Gateway") | .spec.listeners[0].tls.certificateRefs[0].name' "$gateway")" == 'wildcard-lab-supermorphic-com-tls' ]]
+    proxy='kubernetes/apps/networking/internal-gateway/app/envoyproxy.yaml'
+    [[ "$(yq -r '.spec.provider.kubernetes.envoyDeployment.replicas' "$proxy")" == '2' ]]
+    [[ "$(yq -r '.spec.provider.kubernetes.envoyService.annotations."metallb.io/loadBalancerIPs"' "$proxy")" == '192.168.90.101' ]]
+    [[ "$(yq -r '.spec.provider.kubernetes.envoyService.externalTrafficPolicy' "$proxy")" == 'Local' ]]
+
+    dns_values='kubernetes/apps/networking/external-dns/app/values.yaml'
+    [[ "$(yq -r '.provider.name' "$dns_values")" == 'pihole' ]]
+    [[ "$(yq -r '.registry' "$dns_values")" == 'noop' ]]
+    [[ "$(yq -r '.policy' "$dns_values")" == 'upsert-only' ]]
+    [[ "$(yq -r '.sources | join(" ")' "$dns_values")" == 'gateway-httproute' ]]
+    [[ "$(yq -r '.domainFilters | join(" ")' "$dns_values")" == 'lab.supermorphic.com' ]]
+    [[ "$(yq -r '.annotationFilter' "$dns_values")" == 'external-dns.k8s.io/audience=internal' ]]
+    [[ "$(yq -r '.gatewayNamespace' "$dns_values")" == 'networking' ]]
+    [[ "$(yq -r '.extraArgs."gateway-name"' "$dns_values")" == 'internal' ]]
+    [[ "$(yq -r '.extraArgs."pihole-api-version"' "$dns_values")" == '6' ]]
+    [[ "$(yq -r '.extraArgs."pihole-server"' "$dns_values")" == 'https://pi.hole' ]]
+    [[ "$(yq -r '.extraArgs."pihole-tls-skip-verify" // ""' "$dns_values")" == '' ]]
+    [[ "$(yq -r '.env[] | select(.name == "SSL_CERT_FILE") | .value' "$dns_values")" == '/etc/ssl/pihole/tls_ca.crt' ]]
+    [[ "$(yq -r '.extraVolumes[] | select(.name == "pihole-ca") | .configMap.name' "$dns_values")" == 'pihole-ca' ]]
+    [[ "$(yq -r '.extraVolumeMounts[] | select(.name == "pihole-ca") | [.mountPath, .readOnly] | join(" ")' "$dns_values")" == '/etc/ssl/pihole true' ]]
+    [[ "$(yq -r '.configMapGenerator[] | select(.name == "pihole-ca") | [.namespace, .files[]] | join(" ")' kubernetes/apps/networking/external-dns/app/kustomization.yaml)" == 'external-dns tls_ca.crt=pihole-ca.crt' ]]
+
+    for directory in \
+      kubernetes/apps \
+      kubernetes/apps/security/cert-manager/app \
+      kubernetes/apps/security/cert-manager/config \
+      kubernetes/apps/security/cert-manager/certificate \
+      kubernetes/apps/networking/metallb/app \
+      kubernetes/apps/networking/metallb/config \
+      kubernetes/apps/networking/envoy-gateway/app \
+      kubernetes/apps/networking/internal-gateway/app \
+      kubernetes/apps/networking/external-dns/app \
+      kubernetes/apps/testing/echo/app; do
+      kustomize build "$directory" >"$temp_dir/$(tr '/' '-' <<<"$directory").yaml"
+    done
+
+    printf 'apiVersion: v1\ngenerated: null\nrepositories: []\n' >"$temp_dir/repositories.yaml"
+    export HELM_REPOSITORY_CONFIG="$temp_dir/repositories.yaml"
+    export HELM_REPOSITORY_CACHE="$temp_dir/repository-cache"
+    helm template cert-manager '{{cert_manager_chart}}' \
+      --version '{{cert_manager_version}}' \
+      --namespace cert-manager \
+      --values kubernetes/apps/security/cert-manager/app/values.yaml >"$temp_dir/cert-manager.yaml"
+    helm template metallb metallb \
+      --repo '{{metallb_repository}}' \
+      --version '{{metallb_version}}' \
+      --namespace metallb-system \
+      --values "$metallb_values" >"$temp_dir/metallb.yaml"
+    helm template envoy-gateway '{{envoy_gateway_chart}}' \
+      --version '{{envoy_gateway_version}}' \
+      --namespace envoy-gateway-system \
+      --include-crds \
+      --values kubernetes/apps/networking/envoy-gateway/app/values.yaml >"$temp_dir/envoy-gateway.yaml"
+    helm template external-dns-internal external-dns \
+      --repo '{{external_dns_repository}}' \
+      --version '{{external_dns_chart_version}}' \
+      --namespace external-dns \
+      --values "$dns_values" >"$temp_dir/external-dns.yaml"
+
+    rg -q '^kind: Deployment$' "$temp_dir/cert-manager.yaml"
+    rg -q '^  name: cert-manager$' "$temp_dir/cert-manager.yaml"
+    rg -q '^kind: DaemonSet$' "$temp_dir/metallb.yaml"
+    rg -q '^  name: metallb-speaker$' "$temp_dir/metallb.yaml"
+    ! rg -q '^  name: .*frr' "$temp_dir/metallb.yaml"
+    rg -q '^  name: envoy-gateway$' "$temp_dir/envoy-gateway.yaml"
+    rg -q '^  name: gatewayclasses.gateway.networking.k8s.io$' "$temp_dir/envoy-gateway.yaml"
+    rg -q '^  name: gateways.gateway.networking.k8s.io$' "$temp_dir/envoy-gateway.yaml"
+    rg -q '^  name: httproutes.gateway.networking.k8s.io$' "$temp_dir/envoy-gateway.yaml"
+    rg -q '^  name: envoyproxies.gateway.envoyproxy.io$' "$temp_dir/envoy-gateway.yaml"
+    rg -q -- '--source=gateway-httproute' "$temp_dir/external-dns.yaml"
+    rg -q -- '--provider=pihole' "$temp_dir/external-dns.yaml"
+    rg -q -- '--annotation-filter=external-dns.k8s.io/audience=internal' "$temp_dir/external-dns.yaml"
+    rg -q -- '--gateway-name=internal' "$temp_dir/external-dns.yaml"
+    rg -q -- '--pihole-server=https://pi.hole' "$temp_dir/external-dns.yaml"
+    ! rg -q -- '--pihole-tls-skip-verify' "$temp_dir/external-dns.yaml"
+    [[ "$(yq ea -r 'select(.kind == "Deployment" and .metadata.name == "external-dns-internal") | .spec.template.spec.containers[] | select(.name == "external-dns") | .env[] | select(.name == "SSL_CERT_FILE") | .value' "$temp_dir/external-dns.yaml")" == '/etc/ssl/pihole/tls_ca.crt' ]]
+    [[ "$(yq ea -r 'select(.kind == "Deployment" and .metadata.name == "external-dns-internal") | .spec.template.spec.volumes[] | select(.name == "pihole-ca") | .configMap.name' "$temp_dir/external-dns.yaml")" == 'pihole-ca' ]]
+    [[ "$(yq ea -r 'select(.kind == "Deployment" and .metadata.name == "external-dns-internal") | .spec.template.spec.containers[] | select(.name == "external-dns") | .volumeMounts[] | select(.name == "pihole-ca") | [.mountPath, .readOnly] | join(" ")' "$temp_dir/external-dns.yaml")" == '/etc/ssl/pihole true' ]]
+
+    echo 'Phase 7 source, SOPS provider Secrets, dependency graph, policy, and pinned Helm renders passed validation.'
+
+# Print the read-only Phase 7 controller, certificate, address, Gateway, DNS, and echo state.
+foundation-status:
+    #!/usr/bin/env bash
+    set -u
+
+    kubeconfig='{{kubeconfig}}'
+    status=0
+    [[ -f "$kubeconfig" ]] || {
+      echo 'Missing ignored kubeconfig.' >&2
+      exit 1
+    }
+
+    echo '=== Phase 7 Flux Kustomizations ==='
+    flux get kustomizations --namespace flux-system --show-source --kubeconfig "$kubeconfig" | rg 'NAME|cert-manager|wildcard-certificate|metallb|envoy-gateway|internal-gateway|external-dns-internal|echo' || status=1
+    echo '=== Phase 7 Helm sources and releases ==='
+    flux get sources oci --all-namespaces --kubeconfig "$kubeconfig" || status=1
+    flux get sources helm --all-namespaces --kubeconfig "$kubeconfig" || status=1
+    flux get helmreleases --all-namespaces --kubeconfig "$kubeconfig" || status=1
+    echo '=== Certificates ==='
+    kubectl --kubeconfig "$kubeconfig" get clusterissuers,certificates --all-namespaces || status=1
+    echo '=== MetalLB ==='
+    kubectl --kubeconfig "$kubeconfig" --namespace metallb-system get pods,ipaddresspools,l2advertisements --output wide || status=1
+    echo '=== Internal Gateway ==='
+    kubectl --kubeconfig "$kubeconfig" --namespace networking get gateways,envoyproxies,services,pods --output wide || status=1
+    echo '=== ExternalDNS and echo ==='
+    kubectl --kubeconfig "$kubeconfig" --namespace external-dns get deployments,pods --output wide || status=1
+    kubectl --kubeconfig "$kubeconfig" --namespace testing get deployments,pods,services,httproutes --output wide || status=1
+    echo '=== Pi-hole resolution ==='
+    dig +short @192.168.90.2 echo.lab.supermorphic.com A || status=1
+    exit "$status"
+
+# Verify the complete live Phase 7 internal foundation acceptance gate.
+foundation-verify: foundation-validate
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='{{kubeconfig}}'
+    phase7_names=(cert-manager cert-manager-config wildcard-certificate metallb metallb-config envoy-gateway internal-gateway external-dns-internal echo)
+    [[ -f "$kubeconfig" ]] || {
+      echo 'Missing ignored kubeconfig.' >&2
+      exit 1
+    }
+
+    just kube flux-verify
+    for name in "${phase7_names[@]}"; do
+      kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait \
+        --for=condition=Ready "kustomization/$name" --timeout=15m
+      state="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization "$name" --output json)"
+      [[ "$(yq -r '.spec.suspend // false' - <<<"$state")" == 'false' ]]
+      [[ "$(yq -r '[.status.conditions[] | select(.type == "Ready") | .status][0]' - <<<"$state")" == 'True' ]]
+    done
+
+    for deployment in cert-manager cert-manager-webhook cert-manager-cainjector; do
+      kubectl --kubeconfig "$kubeconfig" --namespace cert-manager rollout status "deployment/$deployment" --timeout=10m
+      replicas="$(kubectl --kubeconfig "$kubeconfig" --namespace cert-manager get deployment "$deployment" --output json | yq -r '[.spec.replicas, (.status.availableReplicas // 0)] | join(" ")')"
+      [[ "$replicas" == '2 2' ]]
+    done
+    for issuer in letsencrypt-staging letsencrypt-production; do
+      kubectl --kubeconfig "$kubeconfig" wait --for=condition=Ready "clusterissuer/$issuer" --timeout=10m
+    done
+    for certificate in wildcard-lab-supermorphic-com-staging wildcard-lab-supermorphic-com; do
+      kubectl --kubeconfig "$kubeconfig" --namespace networking wait --for=condition=Ready "certificate/$certificate" --timeout=15m
+    done
+
+    controller="$(kubectl --kubeconfig "$kubeconfig" --namespace metallb-system get deployment metallb-controller --output json | yq -r '[.spec.replicas, (.status.availableReplicas // 0)] | join(" ")')"
+    [[ "$controller" == '1 1' ]]
+    speaker="$(kubectl --kubeconfig "$kubeconfig" --namespace metallb-system get daemonset metallb-speaker --output json | yq -r '[.status.desiredNumberScheduled, .status.numberReady, (.status.numberUnavailable // 0)] | join(" ")')"
+    [[ "$speaker" == '3 3 0' ]]
+    pool="$(kubectl --kubeconfig "$kubeconfig" --namespace metallb-system get ipaddresspool internal --output json)"
+    [[ "$(yq -r '.spec.addresses | join(" ")' - <<<"$pool")" == '192.168.90.100-192.168.90.110' ]]
+    [[ "$(yq -r '.spec.autoAssign' - <<<"$pool")" == 'false' ]]
+    ! kubectl --kubeconfig "$kubeconfig" --namespace metallb-system get daemonset frr-k8s-daemon >/dev/null 2>&1
+
+    gateway_class="$(kubectl --kubeconfig "$kubeconfig" get gatewayclass internal --output json)"
+    [[ "$(yq -r '[.status.conditions[] | select(.type == "Accepted") | .status][0]' - <<<"$gateway_class")" == 'True' ]]
+    gateway="$(kubectl --kubeconfig "$kubeconfig" --namespace networking get gateway internal --output json)"
+    [[ "$(yq -r '[.status.conditions[] | select(.type == "Programmed") | .status][0]' - <<<"$gateway")" == 'True' ]]
+    [[ "$(yq -r '.status.addresses[].value' - <<<"$gateway" | sort -u)" == '192.168.90.101' ]]
+    [[ "$(yq -r '.status.listeners[] | select(.name == "https") | [.conditions[] | select(.type == "Accepted") | .status][0]' - <<<"$gateway")" == 'True' ]]
+
+    envoy_services="$(kubectl --kubeconfig "$kubeconfig" --namespace networking get services --output json)"
+    envoy_service="$(yq -r '.items[] | select(.spec.type == "LoadBalancer" and (.status.loadBalancer.ingress[]?.ip == "192.168.90.101")) | .metadata.name' - <<<"$envoy_services")"
+    [[ -n "$envoy_service" && "$(wc -l <<<"$envoy_service" | tr -d ' ')" == '1' ]]
+    envoy_deployments="$(kubectl --kubeconfig "$kubeconfig" --namespace networking get deployments --output json)"
+    envoy_ready="$(yq -r '.items[] | select(.metadata.labels."gateway.envoyproxy.io/owning-gateway-name" == "internal") | [.spec.replicas, (.status.availableReplicas // 0)] | join(" ")' - <<<"$envoy_deployments")"
+    [[ "$envoy_ready" == '2 2' ]]
+
+    kubectl --kubeconfig "$kubeconfig" --namespace external-dns rollout status deployment/external-dns-internal --timeout=10m
+    dns_deployment="$(kubectl --kubeconfig "$kubeconfig" --namespace external-dns get deployment external-dns-internal --output json)"
+    dns_args="$(yq -r '.spec.template.spec.containers[0].args[]' - <<<"$dns_deployment")"
+    for argument in \
+      '--source=gateway-httproute' \
+      '--provider=pihole' \
+      '--registry=noop' \
+      '--policy=upsert-only' \
+      '--domain-filter=lab.supermorphic.com' \
+      '--annotation-filter=external-dns.k8s.io/audience=internal' \
+      '--gateway-name=internal' \
+      '--pihole-api-version=6' \
+      '--pihole-server=https://pi.hole'; do
+      rg -Fx -- "$argument" <<<"$dns_args"
+    done
+    ! rg -Fx -- '--pihole-tls-skip-verify' <<<"$dns_args"
+    [[ "$(yq -r '.spec.template.spec.containers[] | select(.name == "external-dns") | .env[] | select(.name == "SSL_CERT_FILE") | .value' - <<<"$dns_deployment")" == '/etc/ssl/pihole/tls_ca.crt' ]]
+    [[ "$(yq -r '.spec.template.spec.volumes[] | select(.name == "pihole-ca") | .configMap.name' - <<<"$dns_deployment")" == 'pihole-ca' ]]
+    [[ "$(yq -r '.spec.template.spec.containers[] | select(.name == "external-dns") | .volumeMounts[] | select(.name == "pihole-ca") | [.mountPath, .readOnly] | join(" ")' - <<<"$dns_deployment")" == '/etc/ssl/pihole true' ]]
+    live_pihole_ca="$(kubectl --kubeconfig "$kubeconfig" --namespace external-dns get configmap pihole-ca --output jsonpath='{.data.tls_ca\.crt}')"
+    [[ "$live_pihole_ca" == "$(<kubernetes/apps/networking/external-dns/app/pihole-ca.crt)" ]]
+
+    kubectl --kubeconfig "$kubeconfig" --namespace testing rollout status deployment/echo --timeout=10m
+    echo_replicas="$(kubectl --kubeconfig "$kubeconfig" --namespace testing get deployment echo --output json | yq -r '[.spec.replicas, (.status.availableReplicas // 0)] | join(" ")')"
+    [[ "$echo_replicas" == '2 2' ]]
+    route="$(kubectl --kubeconfig "$kubeconfig" --namespace testing get httproute echo --output json)"
+    [[ "$(yq -r '[.status.parents[].conditions[] | select(.type == "Accepted") | .status] | unique | join(" ")' - <<<"$route")" == 'True' ]]
+    [[ "$(yq -r '[.status.parents[].conditions[] | select(.type == "ResolvedRefs") | .status] | unique | join(" ")' - <<<"$route")" == 'True' ]]
+
+    dns_answer=''
+    for attempt in {1..30}; do
+      dns_answer="$(dig +short @192.168.90.2 echo.lab.supermorphic.com A | sort -u)"
+      [[ "$dns_answer" == '192.168.90.101' ]] && break
+      sleep 10
+    done
+    [[ "$dns_answer" == '192.168.90.101' ]] || {
+      echo "Pi-hole returned '$dns_answer' instead of 192.168.90.101." >&2
+      exit 1
+    }
+    response="$(curl --silent --show-error --fail --max-time 15 \
+      --resolve echo.lab.supermorphic.com:443:192.168.90.101 \
+      https://echo.lab.supermorphic.com/)"
+    [[ -n "$response" ]]
+
+    just kube cilium-postflight
+    echo 'Phase 7 verification passed: certificates, MetalLB, Envoy Gateway, Pi-hole DNS, trusted HTTPS, echo, Talos, and etcd are healthy.'
 
 # Delete only the permanent canary and prove Flux recreates it from encrypted Git source.
 flux-canary-test: flux-verify

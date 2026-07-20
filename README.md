@@ -97,39 +97,52 @@ All currently defined recipes are listed below. Recipes marked internal are
 normally invoked as dependencies of the operator-facing workflow, but remain
 available for focused developer validation.
 
-| Recipe | Purpose | Availability |
-|---|---|---|
-| `just repo tools` | Install locked tools and print versions | Available |
-| `just repo versions` | Print the active tool versions | Available |
-| `just repo secrets` | Confirm the loaded age identity matches this repository | Available |
-| `just repo verify` | Check policy, Talos sources, and tracked content for secrets | Available |
-| `just repo verify-files` | Check ignore boundaries and SOPS policy | Available; internal validation |
-| `just repo secret-scan` | Run the repository secret scans directly | Available |
-| `just talos generate` | Render and validate machine configs with Talhelper | Available |
-| `just talos validate` | Strictly validate rendered Talos configs and Phase 2 policy | Available |
-| `just talos source-validate` | Validate trackable Talhelper inputs without decrypting identity | Available; internal validation |
-| `just talos apply <node>` | Guard, dry-run, and apply one node's machine config | Enabled in Phase 3; destructive after confirmation |
-| `just bootstrap preflight` | Verify all three installed NUCs and refuse if etcd is initialized | Enabled in Phase 4; read-only |
-| `just bootstrap talos` | Guard and bootstrap etcd exactly once on nuc1 | Enabled in Phase 4; destructive after confirmation |
-| `just bootstrap status [node]` | Print read-only etcd membership, service, discovery, and recent logs; optionally select one node | Enabled in Phase 4; diagnostic |
-| `just bootstrap retry-join <node>` | Guard and reboot a failed nuc2/nuc3 etcd join without re-bootstrap | Enabled in Phase 4; mutating after confirmation |
-| `just bootstrap verify` | Verify the pre-Cilium etcd/Kubernetes/Talos gate and refresh ignored kubeconfig | Historical Phase 4 gate; do not use after Cilium |
-| `just kube cilium-render` | Render the pinned Cilium OCI chart to standard output | Enabled in Phase 5; read-only |
-| `just kube cilium-validate` | Validate Cilium sources, values, and the Helm render | Enabled in Phase 5; read-only |
-| `just kube cilium-status` | Print Helm, node, pod, and Cilium status | Enabled in Phase 5; read-only |
-| `just kube cilium-diagnostics` | Print Talos diagnostics from all cluster nodes | Enabled in Phase 5; read-only |
-| `just kube cilium-postflight` | Verify test cleanup, Talos diagnostics, and etcd health | Enabled in Phase 5; read-only |
-| `just kube cilium-verify` | Run the Phase 5 gate and temporary connectivity tests | Enabled in Phase 5; creates and removes test resources |
-| `just bootstrap cilium` | Guard and install or reconcile Cilium `1.19.6` | Enabled in Phase 5; mutating after confirmation |
-| `just kube flux-validate` | Validate Flux sources, SOPS canary, dependencies, and Cilium adoption guards | Enabled in Phase 6; read-only |
-| `just kube flux-preflight` | Verify published Git, Cilium/Talos/etcd health, and Kubernetes compatibility | Enabled in Phase 6; read-only |
-| `just bootstrap flux` | Bootstrap Flux `2.9.2` and a read-only GitHub SSH deploy key | Enabled in Phase 6; mutating after confirmation |
-| `just bootstrap flux-sops` | Create or verify the matching in-cluster SOPS identity | Enabled in Phase 6; mutating after confirmation |
-| `just bootstrap flux-ssh-known-hosts` | Preserve the deploy key and repair GitHub port-443 host trust | Phase 6 recovery; mutating after confirmation |
-| `just bootstrap flux-adopt-cilium` | Adopt Cilium with guarded workload health and stage the permanent unsuspend | Enabled in Phase 6; mutating after confirmation |
-| `just kube flux-status` | Print Flux controllers and reconciliation state | Enabled in Phase 6; read-only |
-| `just kube flux-verify` | Verify Flux source auth, SOPS, canary, Cilium, Talos, and etcd | Enabled in Phase 6; read-only |
-| `just kube flux-canary-test` | Prove Flux recreates the guarded noncritical canary Secret | Enabled in Phase 6; mutating after confirmation |
+| Recipe | Purpose | Requires from operator | Availability |
+|---|---|---|---|
+| `just repo tools` | Install locked tools and print versions | — | Available |
+| `just repo versions` | Print the active tool versions | — | Available |
+| `just repo secrets` | Confirm the loaded age identity matches this repository | `SOPS_AGE_KEY`[`_FILE`] | Available |
+| `just repo pihole-status` | Verify Pi-hole HTTPS, tracked CA, and application-session write policy | `p1` SSH access | Enabled in Phase 7; read-only |
+| `just repo pihole-ca-refresh` | Guard and refresh only the tracked public Pi-hole CA after reinstall or rotation | `p1` SSH access; `PIHOLE_CA_REFRESH_CONFIRM` | Enabled in Phase 7; mutating tracked public trust source after confirmation |
+| `just repo phase7-secrets` | Validate Phase 7 provider credentials and write only encrypted Secret manifests | `SOPS_AGE_KEY`[`_FILE`]; `CLOUDFLARE_API_TOKEN`; `PIHOLE_PASSWORD`; `PHASE7_SECRETS_CONFIRM` | Enabled in Phase 7; mutating tracked ciphertext after confirmation |
+| `just repo verify` | Check policy, Talos sources, and tracked content for secrets | — | Available |
+| `just repo verify-files` | Check ignore boundaries and SOPS policy | — | Available; internal validation |
+| `just repo secret-scan` | Run the repository secret scans directly | — | Available |
+| `just talos generate` | Render and validate machine configs with Talhelper | `SOPS_AGE_KEY`[`_FILE`] | Available |
+| `just talos validate` | Strictly validate rendered Talos configs and Phase 2 policy | — | Available |
+| `just talos source-validate` | Validate trackable Talhelper inputs without decrypting identity | — | Available; internal validation |
+| `just talos apply <node>` | Guard, dry-run, and apply one node's machine config | `TALOS_APPLY_CONFIRM` | Enabled in Phase 3; destructive after confirmation |
+| `just bootstrap preflight` | Verify all three installed NUCs and refuse if etcd is initialized | — | Enabled in Phase 4; read-only |
+| `just bootstrap talos` | Guard and bootstrap etcd exactly once on nuc1 | `TALOS_BOOTSTRAP_CONFIRM` | Enabled in Phase 4; destructive after confirmation |
+| `just bootstrap status [node]` | Print read-only etcd membership, service, discovery, and recent logs; optionally select one node | — | Enabled in Phase 4; diagnostic |
+| `just bootstrap retry-join <node>` | Guard and reboot a failed nuc2/nuc3 etcd join without re-bootstrap | `TALOS_ETCD_RETRY_CONFIRM` | Enabled in Phase 4; mutating after confirmation |
+| `just bootstrap verify` | Verify the pre-Cilium etcd/Kubernetes/Talos gate and refresh ignored kubeconfig | — | Historical Phase 4 gate; do not use after Cilium |
+| `just kube cilium-render` | Render the pinned Cilium OCI chart to standard output | — | Enabled in Phase 5; read-only |
+| `just kube cilium-validate` | Validate Cilium sources, values, and the Helm render | — | Enabled in Phase 5; read-only |
+| `just kube cilium-status` | Print Helm, node, pod, and Cilium status | — | Enabled in Phase 5; read-only |
+| `just kube cilium-diagnostics` | Print Talos diagnostics from all cluster nodes | — | Enabled in Phase 5; read-only |
+| `just kube cilium-postflight` | Verify test cleanup, Talos diagnostics, and etcd health | — | Enabled in Phase 5; read-only |
+| `just kube cilium-verify` | Run the Phase 5 gate and temporary connectivity tests | — | Enabled in Phase 5; creates and removes test resources |
+| `just bootstrap cilium` | Guard and install or reconcile Cilium `1.19.6` | `CILIUM_BOOTSTRAP_CONFIRM` | Enabled in Phase 5; mutating after confirmation |
+| `just kube flux-validate` | Validate Flux sources, SOPS canary, dependencies, and Cilium adoption guards | — | Enabled in Phase 6; read-only |
+| `just kube flux-preflight` | Verify published Git, Cilium/Talos/etcd health, and Kubernetes compatibility | — | Enabled in Phase 6; read-only |
+| `just bootstrap flux` | Bootstrap Flux `2.9.2` and a read-only GitHub SSH deploy key | `GITHUB_TOKEN`; `FLUX_BOOTSTRAP_CONFIRM` | Enabled in Phase 6; mutating after confirmation |
+| `just bootstrap flux-sops` | Create or verify the matching in-cluster SOPS identity | `SOPS_AGE_KEY`[`_FILE`]; `FLUX_SOPS_CONFIRM` | Enabled in Phase 6; mutating after confirmation |
+| `just bootstrap flux-ssh-known-hosts` | Preserve the deploy key and repair GitHub port-443 host trust | `FLUX_SSH_KNOWN_HOSTS_CONFIRM` | Phase 6 recovery; mutating after confirmation |
+| `just bootstrap flux-adopt-cilium` | Adopt Cilium with guarded workload health and stage the permanent unsuspend | `FLUX_CILIUM_ADOPTION_CONFIRM` | Enabled in Phase 6; mutating after confirmation |
+| `just kube flux-status` | Print Flux controllers and reconciliation state | — | Enabled in Phase 6; read-only |
+| `just kube flux-verify` | Verify Flux source auth, SOPS, canary, Cilium, Talos, and etcd | — | Enabled in Phase 6; read-only |
+| `just kube flux-canary-test` | Prove Flux recreates the guarded noncritical canary Secret | `FLUX_CANARY_CONFIRM` | Enabled in Phase 6; mutating after confirmation |
+| `just kube foundation-validate` | Validate Phase 7 sources, encrypted providers, dependency policy, and pinned chart renders | — | Enabled in Phase 7; read-only |
+| `just kube foundation-status` | Print certificate, MetalLB, Gateway, ExternalDNS, and echo state | — | Enabled in Phase 7; read-only |
+| `just bootstrap foundation` | Reconcile the nine staged foundation units in guarded dependency order | `SOPS_AGE_KEY`[`_FILE`]; `PHASE7_NETWORK_CONFIRM`; `PHASE7_BOOTSTRAP_CONFIRM` | Enabled in Phase 7; mutating after confirmation |
+| `just kube foundation-verify` | Verify DNS, trusted HTTPS, echo, Cilium, Talos, and etcd acceptance | — | Enabled in Phase 7; read-only |
+
+The **Requires from operator** column lists inputs the recipe reads from your
+environment and refuses to run without. `SOPS_AGE_KEY`[`_FILE`] means either the
+key value or a path to it. `*_CONFIRM` values are the exact confirmation strings
+each guarded recipe prints when refused. Secrets and confirmations are never
+stored in `.mise.toml`; recipes fail fast when they are absent.
 
 Future-phase cluster mutations are added only with their validation, guard, and
 documentation boundary. Do not replace a missing workflow with an ad hoc apply.
@@ -142,7 +155,11 @@ evidence are documented in
 [`docs/phase-5-cilium.md`](docs/phase-5-cilium.md).
 The Flux credential model, staged Cilium adoption, exact confirmations, and
 Phase 6 acceptance gate are in
-[`docs/phase-6-flux.md`](docs/phase-6-flux.md).
+[`docs/phase-6-flux.md`](docs/phase-6-flux.md). Phase 7 credentials, rollout,
+failure behavior, and acceptance gates are in
+[`docs/phase-7-foundation.md`](docs/phase-7-foundation.md). Pi-hole fresh-install,
+CA rotation, and application-password recovery are in
+[`docs/pihole-integration.md`](docs/pihole-integration.md).
 
 ## Daily Cluster Health Check
 
@@ -159,6 +176,12 @@ Begin with the aggregate Flux view:
 mise exec -- just kube flux-status
 ```
 
+After Phase 7 is installed, add the foundation view to the daily check:
+
+```bash
+mise exec -- just kube foundation-status
+```
+
 If the mise environment is already activated, omit `mise exec --`. A healthy
 result shows:
 
@@ -172,6 +195,9 @@ result shows:
 - Three etcd members and no etcd alarms.
 - Four healthy Flux controllers and all sources,
   Kustomizations, and HelmReleases reporting Ready.
+- Ready staging and production issuers, the wildcard certificate, MetalLB,
+  Envoy Gateway, ExternalDNS, and echo; Pi-hole resolves the echo hostname to
+  `192.168.90.101`.
 
 If either command fails, use the read-only checks in this order:
 
@@ -274,8 +300,10 @@ repository does not weaken this rule.
 Phase 6 is complete: Flux `2.9.2` reconciles the private repository with a
 read-only deploy key over SSH port 443, decrypts the permanent SOPS canary,
 repairs tested drift, and owns Cilium `1.19.6`. All four Flux Kustomizations are
-Ready and unsuspended; Cilium, Talos, and etcd acceptance gates pass. Phase 7,
-the internal platform foundation beginning with cert-manager, is next. See
+Ready and unsuspended; Cilium, Talos, and etcd acceptance gates pass. Phase 7's
+declarative internal foundation and guarded Just interface are prepared; live
+completion requires the encrypted Cloudflare/Pi-hole credentials and DHCP pool
+confirmation described in [`docs/phase-7-foundation.md`](docs/phase-7-foundation.md). See
 [`docs/phase-3-installation.md`](docs/phase-3-installation.md) for installation
 evidence and [`docs/phase-4-bootstrap.md`](docs/phase-4-bootstrap.md) for the
 bootstrap interface and recovery record. Phase 5 commands and live evidence are

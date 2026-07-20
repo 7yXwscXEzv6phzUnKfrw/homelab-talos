@@ -770,3 +770,159 @@ flux-adopt-cilium:
       echo "Cilium adoption passed with healthy zero-restart workloads; Helm revision advanced from $old_revision to $new_revision."
     fi
     echo "Review $source_file, then commit and push its suspend=false change before running just kube flux-verify."
+
+# Reconcile the suspended Phase 7 foundation in dependency order after guarded preflight.
+foundation:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    owner='7yXwscXEzv6phzUnKfrw'
+    repository='homelab-talos'
+    expected_origin="https://github.com/${owner}/${repository}.git"
+    expected_network_confirmation='reserve:192.168.90.100-110:gateway:192.168.90.101'
+    expected_bootstrap_confirmation='bootstrap:phase7:internal-foundation:192.168.90.101'
+    phase7_names=(cert-manager cert-manager-config wildcard-certificate metallb metallb-config envoy-gateway internal-gateway external-dns-internal echo)
+    phase7_sources=(
+      kubernetes/apps/security/cert-manager/ks.yaml
+      kubernetes/apps/networking/metallb/ks.yaml
+      kubernetes/apps/networking/envoy-gateway/ks.yaml
+      kubernetes/apps/networking/internal-gateway/ks.yaml
+      kubernetes/apps/networking/external-dns/ks.yaml
+      kubernetes/apps/testing/echo/ks.yaml
+    )
+    pihole_ca='kubernetes/apps/networking/external-dns/app/pihole-ca.crt'
+    pihole_api='https://pi.hole'
+    pihole_curl=(
+      curl --silent --show-error --fail-with-body --max-time 10
+      --cacert "$pihole_ca"
+      --resolve 'pi.hole:443:192.168.90.2'
+    )
+    temp_dir="$(mktemp -d /tmp/homelab-talos-foundation-bootstrap.XXXXXX)"
+    resumed=()
+    bootstrap_complete=false
+    pihole_sid=''
+    cleanup_foundation() {
+      if [[ -n "$pihole_sid" ]]; then
+        "${pihole_curl[@]}" \
+          --request DELETE \
+          --header "X-FTL-SID: $pihole_sid" \
+          "$pihole_api/api/auth" >/dev/null 2>&1 || true
+      fi
+      if [[ "$bootstrap_complete" != 'true' && "${#resumed[@]}" -gt 0 ]]; then
+        echo 'Phase 7 did not pass; suspending attempted Kustomizations while preserving their resources.' >&2
+        for name in "${resumed[@]}"; do
+          flux suspend kustomization "$name" \
+            --namespace flux-system \
+            --kubeconfig "$kubeconfig" >/dev/null 2>&1 || true
+        done
+      fi
+      rm -rf -- "$temp_dir"
+    }
+    trap cleanup_foundation EXIT
+    umask 077
+
+    [[ -f "$kubeconfig" ]] || {
+      echo 'Missing ignored kubeconfig.' >&2
+      exit 1
+    }
+    [[ "$(git branch --show-current)" == 'main' ]]
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo 'Refusing Phase 7 bootstrap: commit and push the reviewed suspended sources first.' >&2
+      exit 1
+    }
+    [[ "$(git remote get-url origin)" == "$expected_origin" ]]
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    [[ "$remote_head" == "$(git rev-parse HEAD)" ]] || {
+      echo 'Refusing Phase 7 bootstrap: local HEAD and origin/main differ.' >&2
+      exit 1
+    }
+    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .spec.suspend] | .[]' "${phase7_sources[@]}" | sort -u)" == 'true' ]] || {
+      echo 'Refusing first Phase 7 bootstrap: all nine child Kustomizations must be staged suspended in Git.' >&2
+      exit 1
+    }
+
+    just repo secrets
+    just kube foundation-validate
+    just kube flux-verify
+    flux reconcile kustomization cluster-apps \
+      --namespace flux-system \
+      --with-source \
+      --kubeconfig "$kubeconfig" \
+      --timeout 10m
+    for name in "${phase7_names[@]}"; do
+      live_suspend="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization "$name" --output jsonpath='{.spec.suspend}')"
+      [[ "$live_suspend" == 'true' ]] || {
+        echo "Refusing Phase 7 bootstrap: $name is not suspended in the live cluster." >&2
+        exit 1
+      }
+    done
+
+    sops --decrypt kubernetes/apps/security/cert-manager/config/cloudflare-api-token.sops.yaml >"$temp_dir/cloudflare.yaml"
+    sops --decrypt kubernetes/apps/networking/external-dns/app/pihole-password.sops.yaml >"$temp_dir/pihole.yaml"
+    cloudflare_token="$(yq -r '.stringData."api-token"' "$temp_dir/cloudflare.yaml")"
+    pihole_password="$(yq -r '.stringData.password' "$temp_dir/pihole.yaml")"
+    [[ -n "$cloudflare_token" && "$cloudflare_token" != 'null' ]]
+    [[ -n "$pihole_password" && "$pihole_password" != 'null' ]]
+    token_state="$(curl --silent --show-error --fail-with-body --max-time 10 \
+      --header "Authorization: Bearer $cloudflare_token" \
+      https://api.cloudflare.com/client/v4/user/tokens/verify)"
+    [[ "$(yq -r '.success and (.result.status == "active")' - <<<"$token_state")" == 'true' ]]
+    zone_state="$(curl --silent --show-error --fail-with-body --max-time 10 \
+      --get \
+      --data-urlencode 'name=supermorphic.com' \
+      --header "Authorization: Bearer $cloudflare_token" \
+      https://api.cloudflare.com/client/v4/zones)"
+    [[ "$(yq -r '.success and (.result | length == 1) and (.result[0].name == "supermorphic.com")' - <<<"$zone_state")" == 'true' ]]
+    export PIHOLE_PASSWORD="$pihole_password"
+    yq -n -o=json '{"password": strenv(PIHOLE_PASSWORD)}' >"$temp_dir/pihole-auth.json"
+    pihole_state="$("${pihole_curl[@]}" \
+      --request POST \
+      --header 'Content-Type: application/json' \
+      --data-binary @"$temp_dir/pihole-auth.json" \
+      "$pihole_api/api/auth")"
+    [[ "$(yq -r '.session.valid' - <<<"$pihole_state")" == 'true' ]]
+    pihole_sid="$(yq -r '.session.sid' - <<<"$pihole_state")"
+    [[ -n "$pihole_sid" && "$pihole_sid" != 'null' ]]
+
+    assigned_addresses="$(kubectl --kubeconfig "$kubeconfig" get services --all-namespaces --output json | yq -r '.items[].status.loadBalancer.ingress[]?.ip' | sort -u)"
+    conflicts="$(rg '^192\.168\.90\.(10[0-9]|110)$' <<<"$assigned_addresses" || true)"
+    [[ -z "$conflicts" ]] || {
+      echo "Refusing MetalLB rollout: addresses from the reserved pool are already assigned: $conflicts" >&2
+      exit 1
+    }
+    for address in {100..110}; do
+      if ping -c 1 -W 500 "192.168.90.$address" >/dev/null 2>&1; then
+        echo "Refusing MetalLB rollout: 192.168.90.$address answered ICMP." >&2
+        exit 1
+      fi
+    done
+    [[ "${PHASE7_NETWORK_CONFIRM:-}" == "$expected_network_confirmation" ]] || {
+      echo 'Refusing MetalLB rollout without confirmation that 192.168.90.100-110 is excluded from DHCP.' >&2
+      echo "Set PHASE7_NETWORK_CONFIRM='$expected_network_confirmation' after checking the router reservation scope." >&2
+      exit 1
+    }
+    [[ "${PHASE7_BOOTSTRAP_CONFIRM:-}" == "$expected_bootstrap_confirmation" ]] || {
+      echo 'Refusing to reconcile the Phase 7 foundation.' >&2
+      echo "Set PHASE7_BOOTSTRAP_CONFIRM='$expected_bootstrap_confirmation' after reviewing foundation status." >&2
+      exit 1
+    }
+
+    for name in "${phase7_names[@]}"; do
+      echo "Reconciling Phase 7 Kustomization $name."
+      resumed+=("$name")
+      flux resume kustomization "$name" \
+        --namespace flux-system \
+        --kubeconfig "$kubeconfig"
+      flux reconcile kustomization "$name" \
+        --namespace flux-system \
+        --with-source \
+        --kubeconfig "$kubeconfig" \
+        --timeout 20m
+      kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait \
+        --for=condition=Ready "kustomization/$name" --timeout=20m
+    done
+
+    just kube foundation-verify
+    bootstrap_complete=true
+    echo 'Phase 7 live acceptance passed. Change all Phase 7 Git sources to suspend=false, commit, push, and rerun just kube foundation-verify.'

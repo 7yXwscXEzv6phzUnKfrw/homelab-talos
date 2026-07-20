@@ -48,7 +48,7 @@ starts until the foundation passes its acceptance and soak tests.
 | Cilium | `v1.19.6` |
 | Flux | `v2.9.2` |
 | MetalLB chart | `0.16.1` |
-| Envoy Gateway | `v1.8.0` |
+| Envoy Gateway | `v1.8.2` |
 | ExternalDNS | `v0.21.0` |
 | cert-manager | `v1.21.0` |
 | Talos identity | Generate fresh |
@@ -60,7 +60,7 @@ starts until the foundation passes its acceptance and soak tests.
 | Pi 5 role | Preserve existing k3s cluster; convert to Flux-managed staging later |
 | Initial upgrades | Manual; evaluate tuppr after a successful manual cycle |
 
-Kubernetes `v1.35.6` is intentional. Stable Envoy Gateway `v1.8.0` supports
+Kubernetes `v1.35.6` is intentional. Stable Envoy Gateway `v1.8.2` supports
 Kubernetes through `v1.35`; Kubernetes `v1.36` is deferred until a stable Envoy
 Gateway release supports it.
 
@@ -301,7 +301,7 @@ operational familiarity must be rebuilt. The staged echo deployment exists
 specifically to prove TLS, routing, DNS, and failure behavior before greenfield
 applications are added.
 
-Envoy Gateway `v1.8.0` is selected because it is a stable release. Its published
+Envoy Gateway `v1.8.2` is selected because it is a stable patch release. Its published
 compatibility matrix supports Kubernetes through `v1.35`, which is why the plan
 uses Kubernetes `v1.35.6` instead of Talos's newer default. See the
 [Envoy Gateway compatibility matrix](https://gateway.envoyproxy.io/news/releases/matrix/).
@@ -827,6 +827,10 @@ gates passed. Exact evidence is recorded in `docs/phase-6-flux.md`.
 
 ## Phase 7: Internal Platform Foundation
 
+Implementation, operator commands, security boundaries, and acceptance evidence
+are recorded in
+[`docs/phase-7-foundation.md`](../docs/phase-7-foundation.md).
+
 ### Reconciliation Order
 
 1. cert-manager
@@ -850,7 +854,7 @@ gates passed. Exact evidence is recorded in `docs/phase-6-flux.md`.
 
 - Install MetalLB in L2 mode with pool `192.168.90.100-192.168.90.110`.
 - Reserve `192.168.90.101` for one internal Envoy Gateway.
-- Install stable Envoy Gateway `v1.8.0`.
+- Install stable Envoy Gateway `v1.8.2`.
 - Configure one HTTPS listener using the wildcard certificate.
 - Allow application namespaces to attach HTTPRoutes through an explicit
   `allowedRoutes` policy.
@@ -859,7 +863,8 @@ gates passed. Exact evidence is recorded in `docs/phase-6-flux.md`.
 ### Internal DNS
 
 - Verify the existing DNS server at `192.168.90.2` is running Pi-hole v6 and its
-  API is reachable from the cluster.
+  API is reachable as `https://pi.hole` from the cluster using the tracked public
+  Pi-hole CA. Never skip TLS verification.
 - Use ExternalDNS's native Pi-hole provider rather than a third-party webhook.
 - Configure `source=gateway-httproute`, Pi-hole API version 6, `registry=noop`,
   `policy=upsert-only`, and domain filter `lab.supermorphic.com`.

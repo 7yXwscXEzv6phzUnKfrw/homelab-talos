@@ -86,6 +86,24 @@ Flux workflows are also Just-managed:
 | `just kube flux-verify` | Verify source auth, SOPS, canary, Cilium ownership, Talos, and etcd |
 | `just kube flux-canary-test` | Guard deletion and Flux recreation of the noncritical canary Secret |
 
+Phase 7 foundation workflows preserve the same boundary:
+
+| Command | Behavior |
+|---|---|
+| `just repo pihole-status` | Verify the external Pi-hole HTTPS identity, tracked CA, and application-session write policy |
+| `just repo pihole-ca-refresh` | Guard and refresh only the tracked public Pi-hole CA after reinstall or rotation |
+| `just repo phase7-secrets` | Validate Cloudflare and Pi-hole credentials and write only SOPS ciphertext |
+| `just kube foundation-validate` | Validate the Phase 7 graph, policy, encrypted Secrets, and pinned chart renders |
+| `just kube foundation-status` | Print read-only certificate, MetalLB, Gateway, DNS, route, and workload state |
+| `just bootstrap foundation` | Guard and reconcile the nine suspended Phase 7 units in dependency order |
+| `just kube foundation-verify` | Prove the complete DNS-to-trusted-HTTPS path plus Talos and etcd health |
+
+The Gateway owns one wildcard certificate in `networking`; application routes do
+not copy TLS private keys. ExternalDNS publishes only routes carrying
+`external-dns.k8s.io/audience=internal`. See
+[`docs/phase-7-foundation.md`](../docs/phase-7-foundation.md) for credentials,
+confirmations, rollout order, failure behavior, and acceptance gates.
+
 Kubernetes Secret manifests use the `*.sops.yaml` suffix. SOPS encrypts only
 their `data` and `stringData` fields so metadata remains reviewable by Flux. Load
 and validate the repository identity before editing an encrypted manifest:
@@ -106,5 +124,8 @@ steps; it is not the steady-state deployment workflow.
 
 See the root [`README.md`](../README.md) for workstation setup and
 [`docs/phase-6-flux.md`](../docs/phase-6-flux.md) for the staged bootstrap and
-adoption procedure. [`docs/sops.md`](../docs/sops.md) defines the encryption
-policy.
+adoption procedure. [`docs/phase-7-foundation.md`](../docs/phase-7-foundation.md)
+defines the internal service foundation, and
+[`docs/pihole-integration.md`](../docs/pihole-integration.md) covers Pi-hole
+reinstall and credential recovery. [`docs/sops.md`](../docs/sops.md) defines the
+encryption policy.

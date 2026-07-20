@@ -108,6 +108,17 @@ the old key, re-encrypt every affected SOPS document for the planned recipient,
 and add a dedicated reviewed rotation workflow before changing the live Secret.
 Do not delete a still-needed identity or perform an ad hoc `kubectl` overwrite.
 
+If a Phase 7 provider credential is rotated, load the replacement Cloudflare
+token or Pi-hole application password and rerun the guarded
+`just repo phase7-secrets` writer. It validates both providers and replaces both
+tracked manifests with fresh SOPS ciphertext. Review, validate, commit, and push
+the change; Flux performs the live Secret update. See
+[`phase-7-foundation.md`](phase-7-foundation.md) for the exact inputs and guard.
+After a Pi-hole reinstall or TLS rotation, refresh and review its public CA with
+`just repo pihole-ca-refresh` before rotating the application password. The full
+fail-closed procedure is in
+[`pihole-integration.md`](pihole-integration.md).
+
 After either recovery, use `just kube flux-status`, `just kube flux-verify`, and
 the confirmed `just kube flux-canary-test` gate described in
 [`phase-6-flux.md`](phase-6-flux.md).

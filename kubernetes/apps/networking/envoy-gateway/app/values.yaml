@@ -1,0 +1,16 @@
+crds:
+  enabled: true
+deployment:
+  replicas: 2
+podDisruptionBudget:
+  minAvailable: 1
+config:
+  envoyGateway:
+    provider:
+      type: Kubernetes
+      kubernetes:
+        watch:
+          type: NamespaceSelector
+          namespaceSelector:
+            matchLabels:
+              gateway.supermorphic.com/access: internal

@@ -1,0 +1,42 @@
+annotationFilter: external-dns.k8s.io/audience=internal
+domainFilters:
+  - lab.supermorphic.com
+env:
+  - name: EXTERNAL_DNS_PIHOLE_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        key: password
+        name: pihole-password
+  - name: SSL_CERT_FILE
+    value: /etc/ssl/pihole/tls_ca.crt
+extraVolumeMounts:
+  - name: pihole-ca
+    mountPath: /etc/ssl/pihole
+    readOnly: true
+extraVolumes:
+  - name: pihole-ca
+    configMap:
+      name: pihole-ca
+      items:
+        - key: tls_ca.crt
+          path: tls_ca.crt
+gatewayNamespace: networking
+interval: 1m
+logFormat: json
+managedRecordTypes:
+  - A
+policy: upsert-only
+provider:
+  name: pihole
+registry: noop
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+sources:
+  - gateway-httproute
+triggerLoopOnEvent: true
+extraArgs:
+  gateway-name: internal
+  pihole-api-version: "6"
+  pihole-server: https://pi.hole
