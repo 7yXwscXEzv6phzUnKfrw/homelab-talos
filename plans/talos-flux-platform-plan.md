@@ -41,7 +41,7 @@ starts until the foundation passes its acceptance and soak tests.
 | Nodes | `nuc1`, `nuc2`, `nuc3` |
 | Node addresses | `192.168.90.10-12` via DHCP reservations |
 | Kubernetes API VIP | `192.168.90.20` |
-| Internal Gateway IP | `192.168.90.40` |
+| Internal Gateway IP | `192.168.90.30` |
 | Talos | `v1.13.6` |
 | Kubernetes | `v1.35.6` |
 | Talhelper | `v3.1.13` |
@@ -279,7 +279,7 @@ controller. Its L2 announcement feature is still documented as beta in Cilium
 `1.19`, has per-service lease traffic, and has limitations such as incompatibility
 with `externalTrafficPolicy: Local`. MetalLB L2 is already understood in this
 environment, where a static L2 pool (previously `192.168.90.100-110` in
-`homelab-gitops`, now consolidated to `192.168.90.40-47`) is proven.
+`homelab-gitops`, now consolidated to `192.168.90.30-39`) is proven.
 
 Keeping MetalLB separates CNI failure diagnosis from LAN address advertisement
 and favors operational maturity over minimizing the controller count. Cilium LB
@@ -853,8 +853,8 @@ are recorded in
 
 ### MetalLB and Envoy Gateway
 
-- Install MetalLB in L2 mode with pool `192.168.90.40-192.168.90.47`.
-- Reserve `192.168.90.40` for one internal Envoy Gateway.
+- Install MetalLB in L2 mode with pool `192.168.90.30-192.168.90.39`.
+- Reserve `192.168.90.30` for one internal Envoy Gateway.
 - Install stable Envoy Gateway `v1.8.2`.
 - Configure one HTTPS listener using the wildcard certificate.
 - Allow application namespaces to attach HTTPRoutes through an explicit
@@ -877,7 +877,7 @@ are recorded in
 - Deploy a small echo service in the testing namespace.
 - Create an HTTPRoute for `echo.lab.supermorphic.com` with the internal DNS
   audience annotation.
-- Verify Pi-hole publishes `192.168.90.40` and HTTPS presents the wildcard
+- Verify Pi-hole publishes `192.168.90.30` and HTTPS presents the wildcard
   certificate.
 
 ### Exit Gate
@@ -885,7 +885,7 @@ are recorded in
 - MetalLB assigns the intended IP without conflict.
 - Gateway is `Programmed` and its listener is accepted.
 - The wildcard certificate is `Ready` using the production issuer.
-- Pi-hole resolves the echo hostname to `192.168.90.40`.
+- Pi-hole resolves the echo hostname to `192.168.90.30`.
 - HTTPS returns the echo response with a trusted certificate.
 
 ## Phase 8: Foundation Soak and Recovery

@@ -5,8 +5,8 @@
 - Prepared: 2026-07-19
 - State: Awaiting provider credentials and guarded live rollout
 - Gateway hostname: `*.lab.supermorphic.com`
-- Gateway address: `192.168.90.40`
-- MetalLB pool: `192.168.90.40-192.168.90.47`
+- Gateway address: `192.168.90.30`
+- MetalLB pool: `192.168.90.30-192.168.90.39`
 - DNS provider: Pi-hole v6 at `https://pi.hole` (`192.168.90.2`)
 
 Phase 7 introduces the shared internal service path. It is deliberately private:
@@ -59,7 +59,7 @@ certificate, address pool, Gateway, or provider Secret.
 | Echo image | `v1.5.1` | Kubernetes Gateway API example image |
 
 MetalLB uses only L2 mode. Both FRR settings are disabled, the pool does not
-auto-assign, and Envoy explicitly requests `192.168.90.40`. Envoy runs two
+auto-assign, and Envoy explicitly requests `192.168.90.30`. Envoy runs two
 Gateway data-plane replicas with a disruption budget. ExternalDNS uses
 `gateway-httproute`, Pi-hole API v6, `registry=noop`, `policy=upsert-only`, an
 exact `lab.supermorphic.com` domain filter, and the internal-audience annotation
@@ -125,7 +125,7 @@ source-control boundary.
 ## Network Safety Gate
 
 Before rollout, verify in the router configuration that
-`192.168.90.40-192.168.90.47` is outside the DHCP allocation scope and is not
+`192.168.90.30-192.168.90.39` is outside the DHCP allocation scope and is not
 assigned by a reservation. ICMP silence alone does not prove an address is safe.
 The bootstrap checks live Kubernetes LoadBalancer assignments and probes the
 addresses, but it still requires the operator's explicit DHCP confirmation.
@@ -136,8 +136,8 @@ After the suspended source commit is on `origin/main`, keep the age identity
 loaded and run:
 
 ```bash
-export PHASE7_NETWORK_CONFIRM='reserve:192.168.90.40-47:gateway:192.168.90.40'
-export PHASE7_BOOTSTRAP_CONFIRM='bootstrap:phase7:internal-foundation:192.168.90.40'
+export PHASE7_NETWORK_CONFIRM='reserve:192.168.90.30-39:gateway:192.168.90.30'
+export PHASE7_BOOTSTRAP_CONFIRM='bootstrap:phase7:internal-foundation:192.168.90.30'
 mise exec -- just bootstrap foundation
 unset PHASE7_NETWORK_CONFIRM PHASE7_BOOTSTRAP_CONFIRM SOPS_AGE_KEY
 ```
@@ -167,12 +167,12 @@ The phase is complete only when the final verifier proves:
 - MetalLB has one controller, three speakers, the exact non-auto-assign pool,
   and no FRR workload;
 - the GatewayClass is Accepted and the Gateway/listener are Programmed at
-  `192.168.90.40`;
+  `192.168.90.30`;
 - two Envoy data-plane replicas are available;
 - ExternalDNS carries every constrained Pi-hole argument;
 - ExternalDNS mounts the tracked public Pi-hole CA, uses `https://pi.hole`, and
   does not skip TLS verification;
-- Pi-hole resolves `echo.lab.supermorphic.com` only to `192.168.90.40`;
+- Pi-hole resolves `echo.lab.supermorphic.com` only to `192.168.90.30`;
 - HTTPS succeeds with normal certificate verification and returns an echo response;
 - Cilium postflight, Talos diagnostics, and etcd health still pass.
 

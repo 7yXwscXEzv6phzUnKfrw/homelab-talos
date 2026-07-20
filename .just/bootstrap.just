@@ -780,8 +780,8 @@ foundation:
     owner='7yXwscXEzv6phzUnKfrw'
     repository='homelab-talos'
     expected_origin="https://github.com/${owner}/${repository}.git"
-    expected_network_confirmation='reserve:192.168.90.40-47:gateway:192.168.90.40'
-    expected_bootstrap_confirmation='bootstrap:phase7:internal-foundation:192.168.90.40'
+    expected_network_confirmation='reserve:192.168.90.30-39:gateway:192.168.90.30'
+    expected_bootstrap_confirmation='bootstrap:phase7:internal-foundation:192.168.90.30'
     phase7_names=(cert-manager cert-manager-config wildcard-certificate metallb metallb-config envoy-gateway internal-gateway external-dns-internal echo)
     phase7_sources=(
       kubernetes/apps/security/cert-manager/ks.yaml
@@ -886,19 +886,19 @@ foundation:
     [[ -n "$pihole_sid" && "$pihole_sid" != 'null' ]]
 
     assigned_addresses="$(kubectl --kubeconfig "$kubeconfig" get services --all-namespaces --output json | yq -r '.items[].status.loadBalancer.ingress[]?.ip' | sort -u)"
-    conflicts="$(rg '^192\.168\.90\.4[0-7]$' <<<"$assigned_addresses" || true)"
+    conflicts="$(rg '^192\.168\.90\.3[0-9]$' <<<"$assigned_addresses" || true)"
     [[ -z "$conflicts" ]] || {
       echo "Refusing MetalLB rollout: addresses from the reserved pool are already assigned: $conflicts" >&2
       exit 1
     }
-    for address in {40..47}; do
+    for address in {30..39}; do
       if ping -c 1 -W 500 "192.168.90.$address" >/dev/null 2>&1; then
         echo "Refusing MetalLB rollout: 192.168.90.$address answered ICMP." >&2
         exit 1
       fi
     done
     [[ "${PHASE7_NETWORK_CONFIRM:-}" == "$expected_network_confirmation" ]] || {
-      echo 'Refusing MetalLB rollout without confirmation that 192.168.90.40-47 is excluded from DHCP.' >&2
+      echo 'Refusing MetalLB rollout without confirmation that 192.168.90.30-39 is excluded from DHCP.' >&2
       echo "Set PHASE7_NETWORK_CONFIRM='$expected_network_confirmation' after checking the router reservation scope." >&2
       exit 1
     }
