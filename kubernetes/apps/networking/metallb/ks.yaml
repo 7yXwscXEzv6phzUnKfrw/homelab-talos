@@ -20,7 +20,7 @@ spec:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-  suspend: true
+  suspend: false
   timeout: 10m
   wait: true
 ---
@@ -45,6 +45,6 @@ spec:
     kind: GitRepository
     name: flux-system
     namespace: flux-system
-  suspend: true
+  suspend: false
   timeout: 5m
   wait: false
