@@ -562,10 +562,12 @@ configuration command:
 
 ## Phase 0: Preserve and Preflight
 
-Implementation evidence and the remaining physical checklist are maintained in
-[`docs/phase-0-preflight.md`](../docs/phase-0-preflight.md). Phase 0 is in progress;
-the live inventory and rollback tag are complete, while `nuc1`, BIOS, new-drive,
-new-config, and USB checks remain open.
+Implementation evidence is recorded in
+[`docs/phase-0-preflight.md`](../docs/phase-0-preflight.md). Phase 0 completed on
+2026-07-18 with a documented Samsung drive-diagnostic waiver. The live inventory,
+rollback tag, router reservations, BIOS 0080 updates, firmware-setting rechecks,
+and Secure Boot USB maintenance-mode test all passed, and the labeled old SSDs
+are stored for rollback.
 
 ### Objectives
 
@@ -672,7 +674,9 @@ schematic and Talos `v1.13.6`.
    consume the entire NVMe.
 4. Provision an XFS `UserVolumeConfig` named `longhorn` on the system NVMe with a
    minimum size of `700GiB`, growth into remaining free space, and mount path
-   `/var/mnt/longhorn`.
+   `/var/mnt/longhorn`. Phase 9 revises this to a fixed `maxSize: 500GiB` without
+   `grow` to reclaim node-local NVMe headroom before Longhorn is installed; see
+   Phase 9.
 5. Leave the Longhorn user volume unencrypted as selected. Future Longhorn data
    protection comes from replication, backups, and application-level secrets.
 
@@ -918,22 +922,64 @@ the old SSDs be wiped or reused.
 
 ## Phase 9: Storage
 
-1. Install a stable Longhorn `1.12.x` release verified against the chosen Talos
-   and Kubernetes versions.
-2. Point Longhorn's default data path to `/var/mnt/longhorn`.
-3. Use two replicas and enforce node-level replica anti-affinity.
-4. Configure the UNAS CIFS backup target and SOPS-encrypted credentials.
-5. Add recurring snapshots and backups, then prove restoration into a new PVC.
-6. Install NFS CSI and define separate StorageClasses for `/media` and
-   `/downloads` on the UNAS Pro.
-7. Test one PVC on Longhorn and each NFS StorageClass before adding applications.
+1. Cap the Longhorn user volume before installing Longhorn. Revise
+   `talos/talconfig.yaml` so the `longhorn` user volume uses a fixed
+   `maxSize: 500GiB` and drops `grow: true`; remove the `700GiB` `minSize` (or set
+   it no higher than the cap so it does not conflict). Re-render and re-apply the
+   machine configs one node at a time.
+   - This reclaims roughly 280 GiB (~300 GB) of unallocated NVMe per node — about
+     840 GiB (~900 GB) cluster-wide — for node-local scratch, a future
+     `local-path` StorageClass, and the transcode-scratch decision below, while
+     still leaving ~750 GiB of usable Longhorn capacity at two replicas.
+   - Do this now because the volume is XFS, which grows online but can never
+     shrink. Applying the smaller cap makes Talos destroy and recreate the volume,
+     which is safe only while it is empty — that is, before Longhorn is installed.
+     Once Longhorn holds replicas the same change becomes a disruptive per-node
+     replica evacuation and rebuild.
+   - Update the `talos/mod.just` validation guard that currently asserts the
+     `longhorn` volume `minSize` is `700GiB` so it matches the new fixed size.
+2. Install a current stable Longhorn release verified against the chosen Talos
+   `v1.13.6` and Kubernetes `v1.35.6`. `1.12.x` was the reference line at plan
+   time; confirm the latest stable release and its published compatibility matrix
+   before installing rather than pinning the stale minor.
+3. Point Longhorn's default data path to `/var/mnt/longhorn`.
+4. Use two replicas and enforce node-level replica anti-affinity.
+5. Configure the UNAS CIFS backup target and SOPS-encrypted credentials.
+6. Add recurring snapshots and backups, then prove restoration into a new PVC.
+7. Install the NFS CSI driver for UNAS Pro bulk storage. Talos mounts standard
+   NFSv4 through its in-kernel client, so no additional system extension is
+   required for NFS.
+8. Expose downloads and media as a single hardlink-safe filesystem, not two
+   separate StorageClasses or exports. Sonarr and Radarr only perform instant,
+   zero-extra-space imports (hardlinks and atomic moves) when the download and
+   media paths share one filesystem; separate mounts appear as different
+   filesystems and silently force an I/O-intensive copy-then-delete that also
+   doubles space during the copy.
+   - Back the data with one UNAS NFS export (for example `unas:/volume1/data`)
+     that contains `downloads/` and `media/` as sibling subfolders.
+   - Mount that one export once into each media application at `/data`, and
+     address the two trees as `/data/downloads` and `/data/media`. Do not split
+     it into per-purpose PVCs or `subPath` mounts, because those present as
+     distinct filesystems inside the container and defeat hardlinking.
+   - Mount with `nfsvers=4.1` and `hard` so imports are atomic and stalled I/O
+     retries instead of failing.
+9. Decide where Plex writes transcode temp data before Phase 11. Hardware
+   transcode scratch must not live on NFS; use node-local fast storage (the NVMe
+   headroom reclaimed in step 1) or an `emptyDir`/`tmpfs` volume sized for the
+   expected concurrent transcode segments. This is the one legitimate media-path
+   use of the NVMe; the bulk download buffer belongs on the UNAS, not the NVMe.
+10. Test one PVC on Longhorn and one on the NFS `/data` class, and prove that a
+    file moved between `/data/downloads` and `/data/media` becomes a hardlink
+    before adding applications.
 
 ### Exit Gate
 
 - Longhorn nodes, disks, engines, and replicas are healthy.
 - A replica rebuild succeeds after a single-node reboot.
 - A Longhorn backup can be restored.
-- Both NFS classes support the expected read/write behavior.
+- The NFS `/data` class supports the expected read/write behavior.
+- A file moved between `/data/downloads` and `/data/media` uses a hardlink and
+  consumes no additional space.
 
 ## Phase 10: Greenfield Platform Applications
 
@@ -961,12 +1007,16 @@ Suggested order:
 1. Verify the `i915` extension exposes `/dev/dri/renderD128` on all appropriate
    NUCs.
 2. Deploy the Intel device plugin and validate GPU resource discovery.
-3. Create the media namespace and NFS-backed media/download PVCs.
+3. Create the media namespace and mount the single hardlink-safe NFS `/data`
+   volume from Phase 9 (with `downloads/` and `media/` subfolders) into the media
+   applications. Do not create separate download and media PVCs.
 4. Deploy Gluetun and the selected download client in one pod/network namespace.
 5. Deploy Prowlarr, Sonarr, Radarr, Jellyseerr, and Plex.
-6. Store application configuration on Longhorn and bulk media/downloads on NFS.
-7. Prove VPN egress, download/import flow, atomic media moves, and Plex hardware
-   transcoding before declaring the phase complete.
+6. Store application configuration on Longhorn block volumes and bulk
+   downloads/media on the shared NFS `/data` volume. Point the Plex transcode
+   scratch at the node-local or `tmpfs` location chosen in Phase 9.
+7. Prove VPN egress, download/import flow, hardlinked atomic media moves within
+   `/data`, and Plex hardware transcoding before declaring the phase complete.
 8. Keep Plex LAN-only; public streaming exposure remains deferred.
 
 ## Phase 12: Operations and Lifecycle
@@ -1000,6 +1050,9 @@ This plan intentionally rejects or defers these earlier choices:
 - Kubernetes `v1.36`: deferred until stable Envoy Gateway support exists
 - `i915-ucode`: replaced by the current `siderolabs/i915` extension
 - Longhorn on shared EPHEMERAL: replaced by a capacity-isolated user volume
+- Longhorn volume growing into all free space (`grow: true`, ~837 GB/node):
+  replaced in Phase 9 by a fixed `maxSize: 500GiB` cap to preserve node-local
+  NVMe headroom, since the XFS volume can grow online but never shrink
 - Third-party Pi-hole webhook: replaced by native Pi-hole v6 support
 - Internal and public Gateways on day one: internal only until an actual need exists
 - Reflector: secrets are deployed directly to consuming namespaces

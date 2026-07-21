@@ -113,7 +113,7 @@ Required operator actions:
 - [ ] Keep reliable power connected throughout each firmware update.
 - [x] After each update, verify UEFI-only boot, Secure Boot, TPM 2.0, boot order,
       and the NIC settings because firmware updates can reset setup values.
-- [ ] Boot the old Talos disk once and reconfirm `securitystate.secureBoot: true`
+- [x] Boot the old Talos disk once and reconfirm `securitystate.secureBoot: true`
       and the presence of `/dev/tpm0` before replacing the SSD.
 
 Do not enroll the new TPM-backed volume keys until the BIOS updates and firmware
