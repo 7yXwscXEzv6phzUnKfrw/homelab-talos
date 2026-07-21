@@ -926,3 +926,147 @@ foundation:
     just kube foundation-verify
     bootstrap_complete=true
     echo 'Phase 7 live acceptance passed. Change all Phase 7 Git sources to suspend=false, commit, push, and rerun just kube foundation-verify.'
+
+# Guard, reboot one node, and require full recovery before returning. Refuses
+# unless the cluster is already healthy so a rolling reboot never removes a second
+# node while another is degraded. Reused for Phase 8 soak and day-two maintenance.
+reboot node:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    node='{{node}}'
+    case "$node" in
+      nuc1) node_ip='192.168.90.10' ;;
+      nuc2) node_ip='192.168.90.11' ;;
+      nuc3) node_ip='192.168.90.12' ;;
+      *)
+        echo 'Node must be one of: nuc1, nuc2, nuc3.' >&2
+        exit 1
+        ;;
+    esac
+
+    talosconfig='clusterconfig/talosconfig'
+    kubeconfig='kubeconfig'
+    nodes_csv='192.168.90.10,192.168.90.11,192.168.90.12'
+    expected_names=$'nuc1\nnuc2\nnuc3'
+    expected_confirmation="reboot:${node}:${node_ip}"
+
+    just repo require-bash
+    [[ -f "$talosconfig" ]] || {
+      echo 'Missing clusterconfig/talosconfig; run just talos generate.' >&2
+      exit 1
+    }
+    [[ -f "$kubeconfig" ]] || {
+      echo 'Missing ignored kubeconfig.' >&2
+      exit 1
+    }
+
+    cluster_healthy() {
+      local nodes_json ready names members member_count member_names alarms alarm_rows
+      nodes_json="$(kubectl --kubeconfig "$kubeconfig" get nodes --output json 2>/dev/null)" || return 1
+      names="$(yq -r '.items[].metadata.name' - <<<"$nodes_json" | sort)"
+      [[ "$names" == "$expected_names" ]] || return 1
+      ready="$(yq -r '[.items[] | .status.conditions[] | select(.type == "Ready") | .status] | sort | join(" ")' - <<<"$nodes_json")"
+      [[ "$ready" == 'True True True' ]] || return 1
+      members="$(talosctl --talosconfig "$talosconfig" --nodes 192.168.90.10 --endpoints "$nodes_csv" etcd members 2>/dev/null)" || return 1
+      member_count="$(awk 'NR > 1 && NF {count++} END {print count + 0}' <<<"$members")"
+      [[ "$member_count" == '3' ]] || return 1
+      member_names="$(awk 'NR > 1 && NF {print $3}' <<<"$members" | sort)"
+      [[ "$member_names" == "$expected_names" ]] || return 1
+      alarms="$(talosctl --talosconfig "$talosconfig" --nodes "$nodes_csv" --endpoints "$nodes_csv" etcd alarm list 2>/dev/null)" || return 1
+      alarm_rows="$(awk 'NR > 1 && NF {count++} END {print count + 0}' <<<"$alarms")"
+      [[ "$alarm_rows" == '0' ]] || return 1
+    }
+
+    announcer() {
+      kubectl --kubeconfig "$kubeconfig" get servicel2statuses.metallb.io --all-namespaces --output json 2>/dev/null \
+        | yq -r '[.items[].status.node] | join(" ")'
+    }
+
+    node_ready() {
+      kubectl --kubeconfig "$kubeconfig" get node "$node" --output json 2>/dev/null \
+        | yq -r '[.status.conditions[] | select(.type == "Ready") | .status][0]' 2>/dev/null
+    }
+
+    echo "=== pre-reboot health gate ==="
+    cluster_healthy || {
+      echo "Refusing to reboot $node: the cluster is not fully healthy (three Ready nodes, three etcd members, no alarms)." >&2
+      exit 1
+    }
+    announcer_before="$(announcer)"
+    echo "Cluster healthy. MetalLB is announcing 192.168.90.30 from: ${announcer_before:-<none>}"
+
+    [[ "${TALOS_REBOOT_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo "Refusing to reboot $node." >&2
+      echo "Set TALOS_REBOOT_CONFIRM='$expected_confirmation' and rerun after reviewing the pre-reboot health." >&2
+      exit 1
+    }
+
+    echo "Rebooting $node ($node_ip); etcd quorum drops to 2/3 until it returns."
+    talosctl --talosconfig "$talosconfig" --nodes "$node_ip" --endpoints "$node_ip" reboot --wait=false
+
+    if rg -qw "$node" <<<"$announcer_before"; then
+      echo "=== $node announced 192.168.90.30; watching MetalLB fail the announcement over ==="
+      moved=false
+      for _ in {1..90}; do
+        current="$(announcer)"
+        if [[ -n "$current" ]] && ! rg -qw "$node" <<<"$current"; then
+          echo "  192.168.90.30 now announced from: $current"
+          moved=true
+          break
+        fi
+        sleep 2
+      done
+      [[ "$moved" == 'true' ]] || echo "Warning: did not observe MetalLB failover away from $node within the window." >&2
+    fi
+
+    echo "=== waiting for $node to drop ==="
+    for _ in {1..60}; do
+      [[ "$(node_ready)" != 'True' ]] && break
+      sleep 2
+    done
+
+    echo "=== waiting for $node to return Ready ==="
+    ready_state=''
+    for _ in {1..90}; do
+      ready_state="$(node_ready)"
+      [[ "$ready_state" == 'True' ]] && break
+      sleep 5
+    done
+    [[ "$ready_state" == 'True' ]] || {
+      echo "Node $node did not return to Ready after reboot." >&2
+      exit 1
+    }
+
+    echo "=== verifying Secure Boot and TPM volume auto-unlock on $node ==="
+    common=(--talosconfig "$talosconfig" --nodes "$node_ip" --endpoints "$node_ip" --output yaml)
+    security_state="$(talosctl get securitystate "${common[@]}")"
+    [[ "$(yq -r '.spec.secureBoot' - <<<"$security_state")" == 'true' ]] || {
+      echo "$node did not report Secure Boot after reboot." >&2
+      exit 1
+    }
+    [[ "$(yq -r '.spec.bootedWithUKI' - <<<"$security_state")" == 'true' ]]
+    volume_state="$(talosctl get volumestatuses "${common[@]}")"
+    [[ "$(yq ea -r 'select(.metadata.id == "STATE") | [.spec.phase, .spec.encryptionProvider] | join(" ")' - <<<"$volume_state")" == 'ready luks2' ]] || {
+      echo "$node STATE volume did not unlock via TPM after reboot." >&2
+      exit 1
+    }
+    [[ "$(yq ea -r 'select(.metadata.id == "EPHEMERAL") | [.spec.phase, .spec.encryptionProvider] | join(" ")' - <<<"$volume_state")" == 'ready luks2' ]] || {
+      echo "$node EPHEMERAL volume did not unlock via TPM after reboot." >&2
+      exit 1
+    }
+    [[ "$(yq ea -r 'select(.metadata.id == "u-longhorn") | .spec.phase' - <<<"$volume_state")" == 'ready' ]]
+
+    echo "=== waiting for etcd to return to three healthy members ==="
+    for _ in {1..60}; do
+      cluster_healthy && break
+      sleep 5
+    done
+    cluster_healthy || {
+      echo "Cluster did not return to full health after the $node reboot." >&2
+      exit 1
+    }
+
+    just kube foundation-verify
+
+    echo "Reboot recovery passed for $node: Secure Boot and TPM auto-unlock, three-member etcd with no alarms, MetalLB, DNS, and trusted HTTPS are healthy."
