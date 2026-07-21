@@ -9,3 +9,12 @@ The router must exclude the entire pool from DHCP. Use
 `just bootstrap foundation` for the guarded first reconciliation and
 `just kube foundation-status` for inspection; see
 [`docs/phase-7-foundation.md`](../../../../docs/phase-7-foundation.md).
+
+All three nodes are schedulable control planes, so the Talos machine config
+deletes `node.kubernetes.io/exclude-from-external-load-balancers` from
+`machine.nodeLabels` (see `talos/patches/machine.yaml`). Talos adds and
+reconciles that label on control-plane nodes, and MetalLB honors it: if every
+node carries it, MetalLB reports "no available nodes" and never announces the
+Gateway IP. Removing it only at the Kubernetes layer (`kubectl label`) does not
+persist because Talos re-applies it from the machine config, so the fix must
+live in the Talos config and be applied with `just talos apply`.

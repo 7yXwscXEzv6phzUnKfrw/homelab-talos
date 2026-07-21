@@ -9,6 +9,16 @@ machine:
     hostDNS:
       enabled: true
       forwardKubeDNSToHost: true
+  nodeLabels:
+    # All three nodes are schedulable control planes that also serve workloads
+    # and MetalLB LoadBalancer traffic. Talos adds
+    # node.kubernetes.io/exclude-from-external-load-balancers to control-plane
+    # nodes and reconciles it from machine.nodeLabels; MetalLB honors that label
+    # and refuses to announce, so with every node excluded there are "no
+    # available nodes" and the internal Gateway IP is never announced. Delete the
+    # label so all three nodes are eligible L2 announcers.
+    node.kubernetes.io/exclude-from-external-load-balancers:
+      $patch: delete
 cluster:
   proxy:
     disabled: true
