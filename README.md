@@ -143,6 +143,7 @@ available for focused developer validation.
 | `just bootstrap foundation` | Reconcile the nine staged foundation units in guarded dependency order | `SOPS_AGE_KEY`[`_FILE`]; `PHASE7_NETWORK_CONFIRM`; `PHASE7_BOOTSTRAP_CONFIRM` | Enabled in Phase 7; mutating after confirmation |
 | `just kube foundation-verify` | Verify DNS, trusted HTTPS, echo, Cilium, Talos, and etcd acceptance | — | Enabled in Phase 7; read-only |
 | `just bootstrap reboot <node>` | Gate on cluster health, reboot one node, and require full recovery (TPM auto-unlock, etcd, MetalLB failover, Cilium, DNS, HTTPS) | `TALOS_REBOOT_CONFIRM` | Enabled in Phase 8; disruptive after confirmation |
+| `just kube flux-restart` | Restart the flux-system controllers and prove reconciliation resumes | `FLUX_RESTART_CONFIRM` | Enabled in Phase 8; mutating after confirmation |
 
 The **Requires from operator** column lists inputs the recipe reads from your
 environment and refuses to run without. `SOPS_AGE_KEY`[`_FILE`] means either the

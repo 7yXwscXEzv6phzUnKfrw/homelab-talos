@@ -823,6 +823,49 @@ foundation-verify: foundation-validate require-bash
     just kube cilium-postflight
     echo 'Phase 7 verification passed: certificates, MetalLB, Envoy Gateway, Pi-hole DNS, trusted HTTPS, echo, Talos, and etcd are healthy.'
 
+# Restart the flux-system controllers and prove reconciliation resumes.
+flux-restart: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    expected_confirmation='restart:flux-system:controllers'
+    [[ -f "$kubeconfig" ]] || {
+      echo 'Missing ignored kubeconfig.' >&2
+      exit 1
+    }
+
+    flux check --kubeconfig "$kubeconfig"
+
+    [[ "${FLUX_RESTART_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to restart the Flux controllers.' >&2
+      echo "Set FLUX_RESTART_CONFIRM='$expected_confirmation' and rerun." >&2
+      exit 1
+    }
+
+    controllers="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get deployments \
+      --selector app.kubernetes.io/part-of=flux --output name)"
+    [[ -n "$controllers" ]] || {
+      echo 'Refusing restart: no Flux controller deployments found.' >&2
+      exit 1
+    }
+    echo 'Restarting Flux controllers:'
+    printf '  %s\n' $controllers
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system rollout restart $controllers
+    while IFS= read -r deployment; do
+      kubectl --kubeconfig "$kubeconfig" --namespace flux-system rollout status "$deployment" --timeout=5m
+    done <<<"$controllers"
+
+    flux check --kubeconfig "$kubeconfig"
+    flux reconcile kustomization cluster-apps \
+      --namespace flux-system \
+      --with-source \
+      --kubeconfig "$kubeconfig" \
+      --timeout 10m
+
+    just kube flux-verify
+    echo 'Flux controllers restarted; controllers are healthy and reconciliation resumed.'
+
 # Delete only the permanent canary and prove Flux recreates it from encrypted Git source.
 flux-canary-test: flux-verify
     #!/usr/bin/env bash
