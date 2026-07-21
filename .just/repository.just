@@ -313,8 +313,22 @@ verify: verify-files
     just repo secret-scan
     @echo "Repository and Phase 2 Talos source checks passed."
 
+# Fail unless running under bash >= 4. macOS /bin/bash 3.2 does not honor set -e
+# for a failed bare [[ ]] or (( )) mid-recipe, so validation assertions would
+# silently not gate. Recipes use #!/usr/bin/env bash, so a bash >= 4 earlier in
+# PATH (for example brew install bash) is what makes the guards effective.
+[private]
+require-bash:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "${BASH_VERSINFO[0]:-0}" -ge 4 ]] || {
+      echo 'This repository requires bash >= 4 (for example: brew install bash).' >&2
+      echo 'macOS /bin/bash 3.2 skips set -e for [[ ]] tests, so validation would not gate.' >&2
+      exit 1
+    }
+
 # Verify ignore boundaries and SOPS policy.
-verify-files:
+verify-files: require-bash
     @git check-ignore -q clusterconfig/nuc1.yaml
     @git check-ignore -q talosconfig
     @git check-ignore -q kubeconfig

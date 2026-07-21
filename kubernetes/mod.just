@@ -186,8 +186,20 @@ cilium-postflight:
 
     echo 'Cilium postflight passed: test resources removed, no Talos diagnostics, three etcd members, and no etcd alarms.'
 
+# Fail unless running under bash >= 4; macOS /bin/bash 3.2 does not honor set -e
+# for a failed bare [[ ]] mid-recipe, so these acceptance assertions would not gate.
+[private]
+require-bash:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "${BASH_VERSINFO[0]:-0}" -ge 4 ]] || {
+      echo 'This repository requires bash >= 4 (for example: brew install bash).' >&2
+      echo 'macOS /bin/bash 3.2 skips set -e for [[ ]] tests, so validation would not gate.' >&2
+      exit 1
+    }
+
 # Verify the complete live Phase 5 Cilium acceptance gate.
-cilium-verify:
+cilium-verify: require-bash
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -429,7 +441,7 @@ flux-status:
     exit "$status"
 
 # Verify final Phase 6 ownership, source, SOPS, canary, and Cilium health.
-flux-verify: flux-validate
+flux-verify: flux-validate require-bash
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -709,7 +721,7 @@ foundation-status:
     exit "$status"
 
 # Verify the complete live Phase 7 internal foundation acceptance gate.
-foundation-verify: foundation-validate
+foundation-verify: foundation-validate require-bash
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -757,10 +769,10 @@ foundation-verify: foundation-validate
     [[ "$(yq -r '.status.addresses[].value' - <<<"$gateway" | sort -u)" == '192.168.90.30' ]]
     [[ "$(yq -r '.status.listeners[] | select(.name == "https") | [.conditions[] | select(.type == "Accepted") | .status][0]' - <<<"$gateway")" == 'True' ]]
 
-    envoy_services="$(kubectl --kubeconfig "$kubeconfig" --namespace networking get services --output json)"
+    envoy_services="$(kubectl --kubeconfig "$kubeconfig" --namespace envoy-gateway-system get services --output json)"
     envoy_service="$(yq -r '.items[] | select(.spec.type == "LoadBalancer" and (.status.loadBalancer.ingress[]?.ip == "192.168.90.30")) | .metadata.name' - <<<"$envoy_services")"
     [[ -n "$envoy_service" && "$(wc -l <<<"$envoy_service" | tr -d ' ')" == '1' ]]
-    envoy_deployments="$(kubectl --kubeconfig "$kubeconfig" --namespace networking get deployments --output json)"
+    envoy_deployments="$(kubectl --kubeconfig "$kubeconfig" --namespace envoy-gateway-system get deployments --output json)"
     envoy_ready="$(yq -r '.items[] | select(.metadata.labels."gateway.envoyproxy.io/owning-gateway-name" == "internal") | [.spec.replicas, (.status.availableReplicas // 0)] | join(" ")' - <<<"$envoy_deployments")"
     [[ "$envoy_ready" == '2 2' ]]
 

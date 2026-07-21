@@ -20,6 +20,10 @@ USB-A-to-USB-C adapter and use the rear USB-C port instead.
 ## Prerequisites
 
 - macOS with Homebrew and Git
+- Bash `>= 4` (`brew install bash`). Recipes use `#!/usr/bin/env bash`, and macOS's
+  built-in `/bin/bash` 3.2 silently skips `set -e` for a failed `[[ ]]` test, so
+  validation assertions would not gate under it. The `require-bash` guard refuses
+  to run the verification recipes on an older bash.
 - Access to this private repository
 - The password-manager item `homelab-talos SOPS age key` when working with secrets
 - Network access to GitHub and upstream release registries when installing tools
@@ -34,7 +38,7 @@ Install mise, review and trust the repository configuration, install the locked
 tools, and validate the checkout:
 
 ```bash
-brew install mise
+brew install mise bash
 mise trust
 mise install --locked
 mise exec -- just repo verify
