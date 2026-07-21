@@ -3,7 +3,8 @@
 ## Status
 
 - Prepared: 2026-07-19
-- State: Awaiting provider credentials and guarded live rollout
+- Completed: 2026-07-20
+- State: Complete; the durable unsuspend and Talos node-label fix are reconciled
 - Gateway hostname: `*.lab.supermorphic.com`
 - Gateway address: `192.168.90.30`
 - MetalLB pool: `192.168.90.30-192.168.90.39`
@@ -178,6 +179,32 @@ The phase is complete only when the final verifier proves:
 
 ## Acceptance Evidence
 
-Live evidence will be recorded here after the guarded rollout. Until that table
-is populated and the durable unsuspend commit reconciles, Phase 7 is prepared but
-not complete.
+Recorded 2026-07-20. All nine Phase 7 Kustomizations are `suspend: false` and
+Ready; the durable desired state is committed on `main`.
+
+| Check | Observed |
+|---|---|
+| cert-manager | chart `cert-manager-1.21.0`; controller, webhook, cainjector Ready |
+| MetalLB | chart `metallb-0.16.1`; controller + three speakers; no FRR workload |
+| Envoy Gateway | chart `gateway-helm-1.8.2`; two data-plane replicas |
+| ExternalDNS | chart `external-dns-1.21.1` (app `v0.21.0`); Pi-hole v6, `registry=noop`, `policy=upsert-only`, internal audience filter |
+| Staging ACME | `wildcard-lab-supermorphic-com-staging` Ready before production issuance |
+| Wildcard certificate | `wildcard-lab-supermorphic-com` Ready from `letsencrypt-production` |
+| Gateway | `internal` Programmed at `192.168.90.30` |
+| MetalLB announcement | L2 announced from `nuc2` (`servicel2status`) |
+| Internal DNS | Pi-hole resolves `echo.lab.supermorphic.com` to `192.168.90.30` |
+| Trusted HTTPS | `https://echo.lab.supermorphic.com` returns HTTP `200` with the wildcard certificate |
+| Platform health | Cilium postflight clean, three etcd members, no etcd alarms |
+
+### Live rollout note: MetalLB on all-control-plane nodes
+
+The first rollout deployed cleanly but MetalLB never announced the Gateway IP.
+Root cause: all three nodes are control planes, and Talos adds
+`node.kubernetes.io/exclude-from-external-load-balancers` to control-plane nodes
+via `machine.nodeLabels` and reconciles it; MetalLB honors that label and reports
+"no available nodes". Removing it with `kubectl label` does not persist because
+Talos re-applies it from the machine config. The durable fix deletes the label in
+`talos/patches/machine.yaml` (`$$patch: delete`, escaped for talhelper's env
+substitution) and is applied to each running node with the guarded
+`just talos apply-live <node>` recipe in `--mode=no-reboot`. See
+[`../kubernetes/apps/networking/metallb/README.md`](../kubernetes/apps/networking/metallb/README.md).

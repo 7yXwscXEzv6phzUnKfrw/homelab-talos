@@ -301,10 +301,13 @@ repository does not weaken this rule.
 Phase 6 is complete: Flux `2.9.2` reconciles the private repository with a
 read-only deploy key over SSH port 443, decrypts the permanent SOPS canary,
 repairs tested drift, and owns Cilium `1.19.6`. All four Flux Kustomizations are
-Ready and unsuspended; Cilium, Talos, and etcd acceptance gates pass. Phase 7's
-declarative internal foundation and guarded Just interface are prepared; live
-completion requires the encrypted Cloudflare/Pi-hole credentials and DHCP pool
-confirmation described in [`docs/phase-7-foundation.md`](docs/phase-7-foundation.md). See
+Ready and unsuspended; Cilium, Talos, and etcd acceptance gates pass. Phase 7 is
+complete: cert-manager, MetalLB, Envoy Gateway, and ExternalDNS are reconciled by
+Flux, the production wildcard certificate is issued, the internal Gateway is
+Programmed at `192.168.90.30`, Pi-hole resolves the echo hostname, and trusted
+HTTPS returns the echo response; acceptance evidence and the MetalLB control-plane
+label fix are in [`docs/phase-7-foundation.md`](docs/phase-7-foundation.md). Phase 8
+foundation soak and reboot recovery is next. See
 [`docs/phase-3-installation.md`](docs/phase-3-installation.md) for installation
 evidence and [`docs/phase-4-bootstrap.md`](docs/phase-4-bootstrap.md) for the
 bootstrap interface and recovery record. Phase 5 commands and live evidence are

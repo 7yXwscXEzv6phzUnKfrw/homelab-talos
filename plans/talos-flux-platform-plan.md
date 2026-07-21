@@ -836,6 +836,18 @@ Implementation, operator commands, security boundaries, and acceptance evidence
 are recorded in
 [`docs/phase-7-foundation.md`](../docs/phase-7-foundation.md).
 
+### Completion State (2026-07-20)
+
+Phase 7 is complete. cert-manager `v1.21.0`, MetalLB `0.16.1`, Envoy Gateway
+`v1.8.2`, and ExternalDNS `v0.21.0` are reconciled by Flux; the production
+wildcard certificate for `*.lab.supermorphic.com` is issued, the internal Gateway
+is Programmed at `192.168.90.30`, Pi-hole resolves the echo hostname to that
+address, and trusted HTTPS returns the echo response. All nine Kustomizations are
+unsuspended and Ready. One unplanned fix was required: because all three nodes are
+control planes, Talos labels them `node.kubernetes.io/exclude-from-external-load-balancers`
+and MetalLB refused to announce; the label is now deleted in the Talos machine
+config and applied with the new guarded `just talos apply-live` day-two workflow.
+
 ### Reconciliation Order
 
 1. cert-manager
