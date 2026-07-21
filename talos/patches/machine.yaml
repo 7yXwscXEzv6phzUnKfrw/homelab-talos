@@ -17,8 +17,10 @@ machine:
     # and refuses to announce, so with every node excluded there are "no
     # available nodes" and the internal Gateway IP is never announced. Delete the
     # label so all three nodes are eligible L2 announcers.
+    # $$patch escapes talhelper's environment-variable substitution so it renders
+    # a literal "$patch: delete" strategic-merge directive for Talos.
     node.kubernetes.io/exclude-from-external-load-balancers:
-      $patch: delete
+      $$patch: delete
 cluster:
   proxy:
     disabled: true
