@@ -8,3 +8,6 @@ metadata:
     pod-security.kubernetes.io/audit: privileged
     pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/warn: privileged
+    # Required for HTTPRoutes here to attach to the internal gateway (its https
+    # listener allows routes only from namespaces carrying this label).
+    gateway.supermorphic.com/access: internal
