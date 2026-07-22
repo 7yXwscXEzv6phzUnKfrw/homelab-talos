@@ -1230,7 +1230,7 @@ gatus-verify: require-bash
 
     [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization gatus --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || { echo 'Gatus Kustomization is not Ready.' >&2; exit 1; }
     [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get helmrelease gatus --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || { echo 'Gatus HelmRelease is not Ready.' >&2; exit 1; }
-    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get pvc gatus --output jsonpath='{.status.phase}' 2>/dev/null)" == 'Bound' ]] || { echo 'Gatus PVC is not Bound.' >&2; exit 1; }
+    kubectl --kubeconfig "$kubeconfig" --namespace "$ns" rollout status deployment/gatus --timeout=3m
 
     accepted=false
     for _ in {1..18}; do
