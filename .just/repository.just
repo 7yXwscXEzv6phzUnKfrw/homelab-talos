@@ -307,6 +307,66 @@ phase7-secrets:
     mv -- "$temp_dir/pihole.sops.yaml" "$pihole_target"
     echo 'Phase 7 provider credentials passed Cloudflare validation and a trusted-HTTPS Pi-hole create/delete proof; only SOPS ciphertext was written.'
 
+# Validate the UNAS CIFS credentials and write only the SOPS-encrypted Longhorn
+# backup Secret (nas-credentials in longhorn-system). Best-effort smbclient auth
+# check when available; Longhorn re-validates the backup target after rollout.
+storage-secrets:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    expected_confirmation='write:storage:nas-credentials:sops'
+    target='kubernetes/apps/storage/longhorn/config/nas-credentials.sops.yaml'
+    cifs_share='//192.168.0.3/Longhorn'
+    temp_dir="$(mktemp -d /tmp/homelab-talos-storage-secrets.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+    umask 077
+
+    just repo secrets
+    [[ -n "${CIFS_USERNAME:-}" ]] || {
+      echo 'Set CIFS_USERNAME to the UNAS SMB user for the Longhorn backup share.' >&2
+      exit 1
+    }
+    [[ -n "${CIFS_PASSWORD:-}" ]] || {
+      echo 'Set CIFS_PASSWORD to that SMB user password.' >&2
+      exit 1
+    }
+    [[ "${STORAGE_SECRETS_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to write the Longhorn backup Secret.' >&2
+      echo "Set STORAGE_SECRETS_CONFIRM='$expected_confirmation' after reviewing the target." >&2
+      exit 1
+    }
+
+    if command -v smbclient >/dev/null 2>&1; then
+      if PASSWD="$CIFS_PASSWORD" smbclient "$cifs_share" -U "$CIFS_USERNAME" -c 'ls' >/dev/null 2>&1; then
+        echo "CIFS auth to $cifs_share succeeded."
+      else
+        echo "CIFS auth to $cifs_share failed; check CIFS_USERNAME/CIFS_PASSWORD and the share." >&2
+        exit 1
+      fi
+    else
+      echo 'smbclient not found; skipping the live CIFS auth check (Longhorn validates the backup target after rollout, and storage-verify confirms it).' >&2
+    fi
+
+    export CIFS_USERNAME CIFS_PASSWORD
+    yq -n \
+      '.apiVersion = "v1" |
+       .kind = "Secret" |
+       .metadata.name = "nas-credentials" |
+       .metadata.namespace = "longhorn-system" |
+       .type = "Opaque" |
+       .stringData.CIFS_USERNAME = strenv(CIFS_USERNAME) |
+       .stringData.CIFS_PASSWORD = strenv(CIFS_PASSWORD)' \
+      >"$temp_dir/nas-credentials.yaml"
+
+    sops --encrypt --filename-override "$target" \
+      "$temp_dir/nas-credentials.yaml" >"$temp_dir/nas-credentials.sops.yaml"
+    [[ "$(sops filestatus "$temp_dir/nas-credentials.sops.yaml" | yq -r '.encrypted')" == 'true' ]]
+    [[ "$(yq -r '.sops.age[].recipient' "$temp_dir/nas-credentials.sops.yaml" | sort -u)" == "$(yq -r '.creation_rules[1].age' .sops.yaml)" ]]
+    ! rg -Fq -- "$CIFS_PASSWORD" "$temp_dir/nas-credentials.sops.yaml"
+
+    mv -- "$temp_dir/nas-credentials.sops.yaml" "$target"
+    echo "Wrote SOPS-encrypted $target (nas-credentials in longhorn-system)."
+
 # Run repository and declarative Talos source validation.
 verify: verify-files
     just talos source-validate

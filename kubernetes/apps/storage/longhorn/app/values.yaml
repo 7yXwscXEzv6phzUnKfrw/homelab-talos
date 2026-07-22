@@ -1,0 +1,22 @@
+# Longhorn 1.12.0 values. Mirrors the proven homelab-gitops config plus the Talos
+# data path and hard replica anti-affinity from the Phase 9 plan.
+preUpgradeChecker:
+  jobEnabled: false
+defaultSettings:
+  # Longhorn stores replicas on the dedicated Talos user volume, not the chart
+  # default /var/lib/longhorn (which would land on EPHEMERAL).
+  defaultDataPath: /var/mnt/longhorn
+  # Hard node-level anti-affinity: a volume's replicas must land on different
+  # nodes (two replicas across three nodes tolerates one node loss).
+  replicaSoftAntiAffinity: false
+  backupTarget: cifs://192.168.0.3/Longhorn
+  backupTargetCredentialSecret: nas-credentials
+  snapshotDataIntegrity: enabled
+  backupCompressionMethod: gzip
+metrics:
+  # No Prometheus Operator until Phase 10; enable the ServiceMonitor then.
+  serviceMonitor:
+    enabled: false
+persistence:
+  defaultClass: true
+  defaultClassReplicaCount: 2
