@@ -1237,6 +1237,73 @@ homepage:
     bootstrap_complete=true
     echo 'Phase 10 Homepage live acceptance passed. Change the Homepage Git source to suspend=false, commit, push, and rerun just kube homepage-verify.'
 
+# Reconcile the suspended Phase 10 Trivy Operator after guarded checks, then
+# verify. On failure the resumed Kustomization is re-suspended, preserving its
+# resources.
+trivy:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    owner='7yXwscXEzv6phzUnKfrw'
+    repository='homelab-talos'
+    expected_origin="https://github.com/${owner}/${repository}.git"
+    expected_confirmation='bootstrap:phase10:trivy-operator'
+    ks='kubernetes/apps/security/trivy-operator/ks.yaml'
+    resumed=false
+    bootstrap_complete=false
+    cleanup_trivy() {
+      if [[ "$bootstrap_complete" != 'true' && "$resumed" == 'true' ]]; then
+        echo 'Phase 10 Trivy did not pass; suspending the attempted Kustomization while preserving its resources.' >&2
+        flux suspend kustomization trivy-operator --namespace flux-system --kubeconfig "$kubeconfig" >/dev/null 2>&1 || true
+      fi
+    }
+    trap cleanup_trivy EXIT
+
+    [[ -f "$kubeconfig" ]] || { echo 'Missing ignored kubeconfig.' >&2; exit 1; }
+    [[ "$(git branch --show-current)" == 'main' ]]
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo 'Refusing Trivy bootstrap: commit and push the reviewed suspended source first.' >&2
+      exit 1
+    }
+    [[ "$(git remote get-url origin)" == "$expected_origin" ]]
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    [[ "$remote_head" == "$(git rev-parse HEAD)" ]] || {
+      echo 'Refusing Trivy bootstrap: local HEAD and origin/main differ.' >&2
+      exit 1
+    }
+    [[ "$(yq -r '.spec.suspend' "$ks")" == 'true' ]] || {
+      echo 'Refusing Trivy bootstrap: the Trivy Kustomization must be staged suspended in Git.' >&2
+      exit 1
+    }
+
+    just kube trivy-validate
+    just kube flux-verify
+    flux reconcile kustomization cluster-apps \
+      --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization trivy-operator --output jsonpath='{.spec.suspend}')" == 'true' ]] || {
+      echo 'Refusing Trivy bootstrap: trivy-operator is not suspended in the live cluster.' >&2
+      exit 1
+    }
+
+    [[ "${TRIVY_BOOTSTRAP_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to reconcile the Phase 10 Trivy Operator.' >&2
+      echo "Set TRIVY_BOOTSTRAP_CONFIRM='$expected_confirmation' after reviewing trivy-validate." >&2
+      exit 1
+    }
+
+    echo 'Reconciling Trivy Operator Kustomization.'
+    resumed=true
+    flux resume kustomization trivy-operator --namespace flux-system --kubeconfig "$kubeconfig"
+    flux reconcile kustomization trivy-operator \
+      --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 15m
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait \
+      --for=condition=Ready kustomization/trivy-operator --timeout=15m
+
+    just kube trivy-verify
+    bootstrap_complete=true
+    echo 'Phase 10 Trivy Operator live acceptance passed. Change the Trivy Git source to suspend=false, commit, push, and rerun just kube trivy-verify.'
+
 # Guard, reboot one node, and require full recovery before returning. Refuses
 # unless the cluster is already healthy so a rolling reboot never removes a second
 # node while another is degraded. Reused for Phase 8 soak and day-two maintenance.

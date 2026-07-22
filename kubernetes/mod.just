@@ -362,7 +362,7 @@ flux-validate:
     kustomize build kubernetes/apps/kube-system/cilium/app >"$temp_dir/cilium.yaml"
     kustomize build kubernetes/apps/flux-system/flux-canary/app >"$temp_dir/canary.yaml"
 
-    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .metadata.name] | .[]' "$temp_dir/apps.yaml" | sort -u)" == $'cert-manager\ncert-manager-config\ncilium\necho\nenvoy-gateway\nexternal-dns-internal\nflux-canary\ngatus\nhomepage\ninternal-gateway\nkube-prometheus-stack\nkube-prometheus-stack-config\nlonghorn\nlonghorn-config\nmetallb\nmetallb-config\nwildcard-certificate' ]]
+    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .metadata.name] | .[]' "$temp_dir/apps.yaml" | sort -u)" == $'cert-manager\ncert-manager-config\ncilium\necho\nenvoy-gateway\nexternal-dns-internal\nflux-canary\ngatus\nhomepage\ninternal-gateway\nkube-prometheus-stack\nkube-prometheus-stack-config\nlonghorn\nlonghorn-config\nmetallb\nmetallb-config\ntrivy-operator\nwildcard-certificate' ]]
     [[ -z "$(rg '^apiVersion: (apps|extensions)/v1beta|^apiVersion: (networking.k8s.io|policy)/v1beta1' kubernetes --glob '*.yaml' || true)" ]]
 
     just kube cilium-validate
@@ -1320,3 +1320,62 @@ homepage-verify: require-bash
 
     just kube foundation-verify
     echo 'Phase 10 Homepage acceptance passed: Kustomization Ready, deployment rolled out, HTTPRoute accepted, and the dashboard reachable with trusted HTTPS at homepage.lab.supermorphic.com.'
+
+# Validate the Phase 10 Trivy Operator source: files, wiring, staged suspend,
+# dependency, pinned chart, key scanner settings, and the render.
+trivy-validate: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    base='kubernetes/apps/security/trivy-operator'
+    ks="$base/ks.yaml"
+    values="$base/app/values.yaml"
+    hr="$base/app/helmrelease.yaml"
+    repo="$base/app/helmrepository.yaml"
+    temp_dir="$(mktemp -d /tmp/homelab-talos-trivy-validate.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+
+    for f in "$ks" "$values" "$hr" "$repo" "$base/app/namespace.yaml" "$base/app/kustomization.yaml"; do
+      [[ -f "$f" ]] || { echo "Missing Phase 10 Trivy source: $f" >&2; exit 1; }
+    done
+    rg -qx '  - ./trivy-operator/ks.yaml' kubernetes/apps/security/kustomization.yaml || {
+      echo 'Refusing: ./trivy-operator/ks.yaml is not listed in the security kustomization.' >&2
+      exit 1
+    }
+
+    suspend_state="$(yq -r '.spec.suspend // false' "$ks")"
+    [[ "$suspend_state" == 'true' || "$suspend_state" == 'false' ]]
+    [[ "$(yq ea -r '[.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'cilium' ]]
+    [[ "$(yq -r '.spec.chart.spec.version' "$hr")" == '0.34.0' ]]
+    [[ "$(yq -r '.spec.url' "$repo")" == 'https://aquasecurity.github.io/helm-charts' ]]
+    [[ "$(yq -r '.operator.sbomGenerationEnabled' "$values")" == 'false' ]]
+    [[ "$(yq -r '.operator.clusterComplianceEnabled' "$values")" == 'false' ]]
+    [[ "$(yq -r '.trivy.ignoreUnfixed' "$values")" == 'true' ]]
+    [[ "$(yq -r '.serviceMonitor.enabled' "$values")" == 'true' ]]
+
+    kustomize build "$base/app" >/dev/null
+    printf 'apiVersion: v1\ngenerated: null\nrepositories: []\n' >"$temp_dir/repos.yaml"
+    HELM_REPOSITORY_CONFIG="$temp_dir/repos.yaml" HELM_REPOSITORY_CACHE="$temp_dir/cache" \
+      helm template trivy-operator trivy-operator --repo https://aquasecurity.github.io/helm-charts --version 0.34.0 --namespace trivy-system --values "$values" >"$temp_dir/trivy.yaml"
+    [[ "$(yq ea 'select(.kind == "ConfigMap" and .metadata.name == "trivy-operator-config") | .data.OPERATOR_SBOM_GENERATION_ENABLED' "$temp_dir/trivy.yaml")" == 'false' ]]
+
+    echo 'Phase 10 Trivy Operator source, wiring, dependency, pinned chart, scanner settings, and render passed validation.'
+
+# Verify the live Trivy Operator: Kustomization + HelmRelease Ready, operator
+# rolled out, report CRDs installed, and foundation green.
+trivy-verify: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    ns='trivy-system'
+
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization trivy-operator --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || { echo 'Trivy Kustomization is not Ready.' >&2; exit 1; }
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get helmrelease trivy-operator --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || { echo 'Trivy HelmRelease is not Ready.' >&2; exit 1; }
+    kubectl --kubeconfig "$kubeconfig" --namespace "$ns" rollout status deployment/trivy-operator --timeout=5m
+    for crd in vulnerabilityreports.aquasecurity.github.io configauditreports.aquasecurity.github.io; do
+      kubectl --kubeconfig "$kubeconfig" get crd "$crd" >/dev/null 2>&1 || { echo "Missing Trivy CRD $crd." >&2; exit 1; }
+    done
+
+    just kube foundation-verify
+    echo 'Phase 10 Trivy Operator acceptance passed: Kustomization and HelmRelease Ready, operator rolled out, and report CRDs installed.'

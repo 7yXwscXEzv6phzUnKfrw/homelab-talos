@@ -1,0 +1,21 @@
+# Trivy Operator: continuously scans workload images and configs, publishing
+# results as CRs (viewable via kubectl or a Grafana dashboard). No UI, no secrets.
+# SBOM generation and cluster-compliance are disabled: both write large/many CRs
+# to etcd. The five core scanners (vulnerability, config-audit, RBAC, exposed
+# secrets, infra-assessment) stay enabled.
+operator:
+  scanJobsConcurrentLimit: 5
+  clusterComplianceEnabled: false
+  sbomGenerationEnabled: false
+trivy:
+  # Only actionable, meaningful findings: fixable, MEDIUM and above.
+  ignoreUnfixed: true
+  severity: "MEDIUM,HIGH,CRITICAL"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+serviceMonitor:
+  enabled: true
