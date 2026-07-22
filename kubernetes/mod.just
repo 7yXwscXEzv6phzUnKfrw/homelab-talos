@@ -1284,9 +1284,15 @@ homepage-validate: require-bash
     [[ "$(yq -r '.spec.hostnames[0]' "$route")" == 'homepage.lab.supermorphic.com' ]]
     [[ "$(yq -r '.spec.parentRefs[0].name' "$route")" == 'internal' ]]
 
+    secret="$base/app/homepage-secrets.sops.yaml"
+    [[ -f "$secret" ]] || { echo "Missing Homepage Secret: $secret (run just repo homepage-secrets)." >&2; exit 1; }
+    [[ "$(sops filestatus "$secret" | yq -r '.encrypted')" == 'true' ]]
+    [[ "$(yq -r '.metadata.name' "$secret")" == 'homepage-secrets' ]]
+    [[ "$(yq -r '.metadata.namespace' "$secret")" == 'homepage' ]]
+
     kustomize build "$base/app" >/dev/null
 
-    echo 'Phase 10 Homepage source, wiring, namespace label, dependency graph, image, allowed-hosts, and HTTPRoute passed validation.'
+    echo 'Phase 10 Homepage source, wiring, namespace label, dependency graph, image, allowed-hosts, HTTPRoute, and encrypted Secret passed validation.'
 
 # Verify the live Homepage app: Kustomization Ready, deployment rolled out,
 # HTTPRoute accepted, dashboard reachable via HTTPS, and foundation green.
