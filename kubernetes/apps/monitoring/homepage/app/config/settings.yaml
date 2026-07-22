@@ -1,7 +1,8 @@
 ---
-title: Homelab
+title: Homelab Dashboard
 theme: dark
 color: slate
+iconStyle: theme
 headerStyle: clean
 layout:
   Observability:

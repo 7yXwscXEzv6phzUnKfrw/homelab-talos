@@ -1,14 +1,43 @@
 ---
-- Documentation:
-    - Talos:
-        - href: https://www.talos.dev/latest/
-          icon: si-talos
-    - Flux:
-        - href: https://fluxcd.io/flux/
-          icon: si-flux
-    - Longhorn:
-        - href: https://longhorn.io/docs/
-          icon: longhorn.svg
+- Development:
+    - Homelab Talos:
+        - href: https://github.com/ksiggins/homelab-talos
+          icon: github-light.svg
+    - Homelab Playbook:
+        - href: https://github.com/ksiggins/homelab-playbook
+          icon: github-light.svg
+    - Homelab GitOps:
+        - href: https://github.com/ksiggins/homelab-gitops
+          icon: github-light.svg
     - Dashboard Icons:
         - href: https://github.com/homarr-labs/dashboard-icons
           icon: github-light.svg
+- Cloud Services:
+    - Cloudflare:
+        - href: https://dash.cloudflare.com
+          icon: cloudflare.svg
+    - Docker Hub:
+        - href: https://hub.docker.com
+          icon: docker.svg
+    - Helm Charts:
+        - href: https://artifacthub.io
+          icon: artifacthub.svg
+    - Public KeyDB:
+        - href: http://fvonline-db.bplaced.net
+          icon: makemkv.png
+- Local Area Network:
+    - Unifi Network:
+        - href: https://192.168.0.1
+          icon: unifi-controller.png
+    - Unifi Protect:
+        - href: https://192.168.0.2
+          icon: unifi-protect.png
+    - Unifi Drive:
+        - href: https://192.168.0.3
+          icon: unifi-drive.png
+    - Cable Modem:
+        - href: https://192.168.100.1/Login.html
+          icon: router.svg
+    - Room Alert Monitor:
+        - href: http://192.168.30.6
+          icon: mdi-temperature-fahrenheit-#FFFFFF

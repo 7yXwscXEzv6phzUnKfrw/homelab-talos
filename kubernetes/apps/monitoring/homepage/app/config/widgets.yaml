@@ -14,6 +14,12 @@
       cpu: true
       memory: true
       showLabel: true
+- resources:
+    backend: resources
+    expanded: true
+    cpu: true
+    memory: true
+    network: default
 - search:
     provider: duckduckgo
     target: _blank
