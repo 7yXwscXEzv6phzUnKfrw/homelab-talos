@@ -362,7 +362,7 @@ flux-validate:
     kustomize build kubernetes/apps/kube-system/cilium/app >"$temp_dir/cilium.yaml"
     kustomize build kubernetes/apps/flux-system/flux-canary/app >"$temp_dir/canary.yaml"
 
-    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .metadata.name] | .[]' "$temp_dir/apps.yaml" | sort -u)" == $'cert-manager\ncert-manager-config\ncilium\necho\nenvoy-gateway\nexternal-dns-internal\nflux-canary\ninternal-gateway\nmetallb\nmetallb-config\nwildcard-certificate' ]]
+    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .metadata.name] | .[]' "$temp_dir/apps.yaml" | sort -u)" == $'cert-manager\ncert-manager-config\ncilium\necho\nenvoy-gateway\nexternal-dns-internal\nflux-canary\ninternal-gateway\nlonghorn\nlonghorn-config\nmetallb\nmetallb-config\nwildcard-certificate' ]]
     [[ -z "$(rg '^apiVersion: (apps|extensions)/v1beta|^apiVersion: (networking.k8s.io|policy)/v1beta1' kubernetes --glob '*.yaml' || true)" ]]
 
     just kube cilium-validate
