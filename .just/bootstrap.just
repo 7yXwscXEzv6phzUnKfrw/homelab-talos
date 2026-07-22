@@ -1016,6 +1016,95 @@ storage:
     bootstrap_complete=true
     echo 'Phase 9 storage live acceptance passed. Change both storage Git sources to suspend=false, commit, push, and rerun just kube storage-verify.'
 
+# Reconcile the suspended Phase 10 monitoring stack (kube-prometheus-stack) after
+# guarded checks, in dependency order, then verify. Flux decrypts the Grafana
+# Secret in-cluster, so this needs no operator SOPS key. On failure the resumed
+# Kustomizations are re-suspended while their resources are preserved.
+monitoring:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    owner='7yXwscXEzv6phzUnKfrw'
+    repository='homelab-talos'
+    expected_origin="https://github.com/${owner}/${repository}.git"
+    expected_confirmation='bootstrap:phase10:monitoring:kube-prometheus-stack'
+    names=(kube-prometheus-stack kube-prometheus-stack-config)
+    ks='kubernetes/apps/monitoring/kube-prometheus-stack/ks.yaml'
+    resumed=()
+    bootstrap_complete=false
+    cleanup_monitoring() {
+      if [[ "$bootstrap_complete" != 'true' && "${#resumed[@]}" -gt 0 ]]; then
+        echo 'Phase 10 monitoring did not pass; suspending attempted Kustomizations while preserving their resources.' >&2
+        for name in "${resumed[@]}"; do
+          flux suspend kustomization "$name" \
+            --namespace flux-system \
+            --kubeconfig "$kubeconfig" >/dev/null 2>&1 || true
+        done
+      fi
+    }
+    trap cleanup_monitoring EXIT
+
+    [[ -f "$kubeconfig" ]] || {
+      echo 'Missing ignored kubeconfig.' >&2
+      exit 1
+    }
+    [[ "$(git branch --show-current)" == 'main' ]]
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo 'Refusing monitoring bootstrap: commit and push the reviewed suspended sources first.' >&2
+      exit 1
+    }
+    [[ "$(git remote get-url origin)" == "$expected_origin" ]]
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    [[ "$remote_head" == "$(git rev-parse HEAD)" ]] || {
+      echo 'Refusing monitoring bootstrap: local HEAD and origin/main differ.' >&2
+      exit 1
+    }
+    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .spec.suspend] | .[]' "$ks" | sort -u)" == 'true' ]] || {
+      echo 'Refusing monitoring bootstrap: both monitoring Kustomizations must be staged suspended in Git.' >&2
+      exit 1
+    }
+
+    just kube monitoring-validate
+    just kube flux-verify
+    flux reconcile kustomization cluster-apps \
+      --namespace flux-system \
+      --with-source \
+      --kubeconfig "$kubeconfig" \
+      --timeout 10m
+    for name in "${names[@]}"; do
+      live_suspend="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization "$name" --output jsonpath='{.spec.suspend}')"
+      [[ "$live_suspend" == 'true' ]] || {
+        echo "Refusing monitoring bootstrap: $name is not suspended in the live cluster." >&2
+        exit 1
+      }
+    done
+
+    [[ "${MONITORING_BOOTSTRAP_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to reconcile the Phase 10 monitoring stack.' >&2
+      echo "Set MONITORING_BOOTSTRAP_CONFIRM='$expected_confirmation' after reviewing monitoring-validate." >&2
+      exit 1
+    }
+
+    for name in "${names[@]}"; do
+      echo "Reconciling monitoring Kustomization $name."
+      resumed+=("$name")
+      flux resume kustomization "$name" \
+        --namespace flux-system \
+        --kubeconfig "$kubeconfig"
+      flux reconcile kustomization "$name" \
+        --namespace flux-system \
+        --with-source \
+        --kubeconfig "$kubeconfig" \
+        --timeout 25m
+      kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait \
+        --for=condition=Ready "kustomization/$name" --timeout=25m
+    done
+
+    just kube monitoring-verify
+    bootstrap_complete=true
+    echo 'Phase 10 monitoring live acceptance passed. Change both monitoring Git sources to suspend=false, commit, push, and rerun just kube monitoring-verify.'
+
 # Guard, reboot one node, and require full recovery before returning. Refuses
 # unless the cluster is already healthy so a rolling reboot never removes a second
 # node while another is degraded. Reused for Phase 8 soak and day-two maintenance.

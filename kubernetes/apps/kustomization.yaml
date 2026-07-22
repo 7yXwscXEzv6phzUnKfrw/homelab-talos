@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - ./flux-system
   - ./kube-system
+  - ./monitoring
   - ./networking
   - ./security
   - ./storage

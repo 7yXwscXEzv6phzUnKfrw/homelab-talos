@@ -362,7 +362,7 @@ flux-validate:
     kustomize build kubernetes/apps/kube-system/cilium/app >"$temp_dir/cilium.yaml"
     kustomize build kubernetes/apps/flux-system/flux-canary/app >"$temp_dir/canary.yaml"
 
-    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .metadata.name] | .[]' "$temp_dir/apps.yaml" | sort -u)" == $'cert-manager\ncert-manager-config\ncilium\necho\nenvoy-gateway\nexternal-dns-internal\nflux-canary\ninternal-gateway\nlonghorn\nlonghorn-config\nmetallb\nmetallb-config\nwildcard-certificate' ]]
+    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .metadata.name] | .[]' "$temp_dir/apps.yaml" | sort -u)" == $'cert-manager\ncert-manager-config\ncilium\necho\nenvoy-gateway\nexternal-dns-internal\nflux-canary\ninternal-gateway\nkube-prometheus-stack\nkube-prometheus-stack-config\nlonghorn\nlonghorn-config\nmetallb\nmetallb-config\nwildcard-certificate' ]]
     [[ -z "$(rg '^apiVersion: (apps|extensions)/v1beta|^apiVersion: (networking.k8s.io|policy)/v1beta1' kubernetes --glob '*.yaml' || true)" ]]
 
     just kube cilium-validate
@@ -1044,3 +1044,123 @@ storage-verify: require-bash
 
     just kube foundation-verify
     echo 'Phase 9 storage acceptance passed: Longhorn healthy on three nodes (disks at /var/mnt/longhorn), default two-replica StorageClass, backup target available, recurring jobs present, and a test PVC bound with replicas on two distinct nodes.'
+
+# Validate the Phase 10 monitoring source: files, encrypted Grafana Secret,
+# dependency graph, staged-suspend uniformity, key values, wiring, HTTPRoutes,
+# and the pinned kube-prometheus-stack render.
+monitoring-validate: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    base='kubernetes/apps/monitoring/kube-prometheus-stack'
+    ks="$base/ks.yaml"
+    secret="$base/app/grafana-admin.sops.yaml"
+    values="$base/app/values.yaml"
+    hr="$base/app/helmrelease.yaml"
+    repo="$base/app/helmrepository.yaml"
+    routes="$base/config/httproutes.yaml"
+    expected_recipient="$(yq -r '.creation_rules[] | select(.path_regex | test("kubernetes")) | .age' .sops.yaml)"
+    temp_dir="$(mktemp -d /tmp/homelab-talos-monitoring-validate.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+
+    for f in "$ks" "$secret" "$values" "$hr" "$repo" "$routes" \
+      "$base/app/namespace.yaml" "$base/app/kustomization.yaml" \
+      "$base/config/kustomization.yaml" kubernetes/apps/monitoring/kustomization.yaml; do
+      [[ -f "$f" ]] || {
+        echo "Missing Phase 10 monitoring source: $f" >&2
+        echo 'Run just repo monitoring-secrets if the Grafana Secret is missing.' >&2
+        exit 1
+      }
+    done
+
+    rg -qx '  - ./monitoring' kubernetes/apps/kustomization.yaml || {
+      echo 'Refusing: ./monitoring is not wired into kubernetes/apps/kustomization.yaml.' >&2
+      exit 1
+    }
+
+    [[ "$(sops filestatus "$secret" | yq -r '.encrypted')" == 'true' ]]
+    [[ "$(yq -r '.sops.age[].recipient' "$secret" | sort -u)" == "$expected_recipient" ]]
+    [[ "$(yq -r '.kind' "$secret")" == 'Secret' ]]
+    [[ "$(yq -r '.metadata.name' "$secret")" == 'grafana-admin-secret' ]]
+    [[ "$(yq -r '.metadata.namespace' "$secret")" == 'monitoring' ]]
+
+    suspend_states="$(yq ea -r '[select(.kind == "Kustomization") | (.spec.suspend // false)] | .[]' "$ks" | sort -u)"
+    [[ "$suspend_states" == 'true' || "$suspend_states" == 'false' ]] || {
+      echo 'Both monitoring Kustomizations must be staged together: all suspended or all active.' >&2
+      exit 1
+    }
+
+    [[ "$(yq ea -r 'select(.metadata.name == "kube-prometheus-stack") | [.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'cilium,longhorn' ]]
+    [[ "$(yq ea -r 'select(.metadata.name == "kube-prometheus-stack-config") | [.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'internal-gateway,kube-prometheus-stack' ]]
+
+    [[ "$(yq -r '.spec.chart.spec.version' "$hr")" == '87.19.0' ]]
+    [[ "$(yq -r '.spec.url' "$repo")" == 'https://prometheus-community.github.io/helm-charts' ]]
+    [[ "$(yq -r '.prometheus.prometheusSpec.retention' "$values")" == '30d' ]]
+    [[ "$(yq -r '.prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage' "$values")" == '50Gi' ]]
+    [[ "$(yq -r '.grafana.persistence.enabled' "$values")" == 'true' ]]
+    for c in kubeProxy kubeControllerManager kubeScheduler kubeEtcd; do
+      [[ "$(yq -r ".${c}.enabled" "$values")" == 'false' ]]
+    done
+    [[ "$(yq ea -r '[select(.kind == "HTTPRoute") | .spec.hostnames[0]] | sort | join(" ")' "$routes")" == 'alertmanager.lab.supermorphic.com grafana.lab.supermorphic.com prometheus.lab.supermorphic.com' ]]
+    [[ "$(yq ea -r '[select(.kind == "HTTPRoute") | .spec.parentRefs[].name] | unique | .[]' "$routes")" == 'internal' ]]
+
+    kustomize build "$base/app" >/dev/null
+    kustomize build "$base/config" >/dev/null
+
+    printf 'apiVersion: v1\ngenerated: null\nrepositories: []\n' >"$temp_dir/repos.yaml"
+    HELM_REPOSITORY_CONFIG="$temp_dir/repos.yaml" HELM_REPOSITORY_CACHE="$temp_dir/cache" \
+      helm template kube-prometheus-stack kube-prometheus-stack --repo https://prometheus-community.github.io/helm-charts --version 87.19.0 --namespace monitoring --values "$values" >"$temp_dir/kps.yaml"
+    render_kinds="$(yq ea -r '[select(.kind == "Prometheus" or .kind == "Alertmanager") | .kind] | .[]' "$temp_dir/kps.yaml" | sort -u | tr '\n' ' ')"
+    [[ "$render_kinds" == 'Alertmanager Prometheus ' ]]
+
+    echo 'Phase 10 monitoring source, encrypted Grafana Secret, dependency graph, values, HTTPRoutes, and pinned kube-prometheus-stack render passed validation.'
+
+# Verify the live monitoring stack: HelmRelease + workloads healthy, PVCs bound
+# on Longhorn, HTTPRoutes accepted, all three UIs reachable with trusted HTTPS
+# through the internal gateway, and the foundation still green.
+monitoring-verify: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    ns='monitoring'
+    gateway_ip='192.168.90.30'
+
+    for k in kube-prometheus-stack kube-prometheus-stack-config; do
+      [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization "$k" --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || {
+        echo "Monitoring Kustomization $k is not Ready." >&2
+        exit 1
+      }
+    done
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get helmrelease kube-prometheus-stack --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || {
+      echo 'kube-prometheus-stack HelmRelease is not Ready.' >&2
+      exit 1
+    }
+
+    pvc_json="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get pvc --output json)"
+    [[ "$(yq -r '[.items[] | select(.status.phase == "Bound")] | length' - <<<"$pvc_json")" -ge 3 ]] || { echo 'Expected at least three bound PVCs in monitoring.' >&2; exit 1; }
+    [[ "$(yq -r '[.items[].status.phase] | unique | join(" ")' - <<<"$pvc_json")" == 'Bound' ]] || { echo 'Not all monitoring PVCs are Bound.' >&2; exit 1; }
+
+    for r in grafana prometheus alertmanager; do
+      route="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get httproute "$r" --output json 2>/dev/null)"
+      [[ "$(yq -r '[.status.parents[].conditions[] | select(.type == "Accepted") | .status] | unique | join(" ")' - <<<"$route")" == 'True' ]] || { echo "HTTPRoute $r is not Accepted." >&2; exit 1; }
+    done
+
+    dns_answer=''
+    for _ in {1..30}; do
+      dns_answer="$(dig +short @192.168.90.2 grafana.lab.supermorphic.com A | sort -u)"
+      [[ "$dns_answer" == "$gateway_ip" ]] && break
+      sleep 10
+    done
+    [[ "$dns_answer" == "$gateway_ip" ]] || { echo "Pi-hole returned '$dns_answer' for grafana, not $gateway_ip." >&2; exit 1; }
+    for host in prometheus alertmanager; do
+      [[ "$(dig +short @192.168.90.2 "$host.lab.supermorphic.com" A | sort -u)" == "$gateway_ip" ]] || { echo "Pi-hole has no $gateway_ip record for $host." >&2; exit 1; }
+    done
+
+    health="$(curl --silent --show-error --fail --max-time 15 --resolve "grafana.lab.supermorphic.com:443:$gateway_ip" https://grafana.lab.supermorphic.com/api/health)"
+    [[ "$(yq -r '.database' - <<<"$health")" == 'ok' ]] || { echo "Grafana /api/health not ok: $health" >&2; exit 1; }
+    curl --silent --show-error --fail --max-time 15 --resolve "prometheus.lab.supermorphic.com:443:$gateway_ip" https://prometheus.lab.supermorphic.com/-/healthy >/dev/null
+    curl --silent --show-error --fail --max-time 15 --resolve "alertmanager.lab.supermorphic.com:443:$gateway_ip" https://alertmanager.lab.supermorphic.com/-/healthy >/dev/null
+
+    just kube foundation-verify
+    echo 'Phase 10 monitoring acceptance passed: kube-prometheus-stack Ready (Prometheus, Alertmanager, Grafana, exporters), PVCs bound on Longhorn, HTTPRoutes accepted, and all three UIs reachable with trusted HTTPS through the internal gateway.'
