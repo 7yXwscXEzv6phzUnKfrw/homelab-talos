@@ -1105,6 +1105,72 @@ monitoring:
     bootstrap_complete=true
     echo 'Phase 10 monitoring live acceptance passed. Change both monitoring Git sources to suspend=false, commit, push, and rerun just kube monitoring-verify.'
 
+# Reconcile the suspended Phase 10 Gatus app after guarded checks, then verify.
+# On failure the resumed Kustomization is re-suspended, preserving its resources.
+gatus:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    owner='7yXwscXEzv6phzUnKfrw'
+    repository='homelab-talos'
+    expected_origin="https://github.com/${owner}/${repository}.git"
+    expected_confirmation='bootstrap:phase10:gatus'
+    ks='kubernetes/apps/monitoring/gatus/ks.yaml'
+    resumed=false
+    bootstrap_complete=false
+    cleanup_gatus() {
+      if [[ "$bootstrap_complete" != 'true' && "$resumed" == 'true' ]]; then
+        echo 'Phase 10 Gatus did not pass; suspending the attempted Kustomization while preserving its resources.' >&2
+        flux suspend kustomization gatus --namespace flux-system --kubeconfig "$kubeconfig" >/dev/null 2>&1 || true
+      fi
+    }
+    trap cleanup_gatus EXIT
+
+    [[ -f "$kubeconfig" ]] || { echo 'Missing ignored kubeconfig.' >&2; exit 1; }
+    [[ "$(git branch --show-current)" == 'main' ]]
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo 'Refusing Gatus bootstrap: commit and push the reviewed suspended source first.' >&2
+      exit 1
+    }
+    [[ "$(git remote get-url origin)" == "$expected_origin" ]]
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    [[ "$remote_head" == "$(git rev-parse HEAD)" ]] || {
+      echo 'Refusing Gatus bootstrap: local HEAD and origin/main differ.' >&2
+      exit 1
+    }
+    [[ "$(yq -r '.spec.suspend' "$ks")" == 'true' ]] || {
+      echo 'Refusing Gatus bootstrap: the Gatus Kustomization must be staged suspended in Git.' >&2
+      exit 1
+    }
+
+    just kube gatus-validate
+    just kube flux-verify
+    flux reconcile kustomization cluster-apps \
+      --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization gatus --output jsonpath='{.spec.suspend}')" == 'true' ]] || {
+      echo 'Refusing Gatus bootstrap: gatus is not suspended in the live cluster.' >&2
+      exit 1
+    }
+
+    [[ "${GATUS_BOOTSTRAP_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to reconcile the Phase 10 Gatus app.' >&2
+      echo "Set GATUS_BOOTSTRAP_CONFIRM='$expected_confirmation' after reviewing gatus-validate." >&2
+      exit 1
+    }
+
+    echo 'Reconciling Gatus Kustomization.'
+    resumed=true
+    flux resume kustomization gatus --namespace flux-system --kubeconfig "$kubeconfig"
+    flux reconcile kustomization gatus \
+      --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 15m
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait \
+      --for=condition=Ready kustomization/gatus --timeout=15m
+
+    just kube gatus-verify
+    bootstrap_complete=true
+    echo 'Phase 10 Gatus live acceptance passed. Change the Gatus Git source to suspend=false, commit, push, and rerun just kube gatus-verify.'
+
 # Guard, reboot one node, and require full recovery before returning. Refuses
 # unless the cluster is already healthy so a rolling reboot never removes a second
 # node while another is degraded. Reused for Phase 8 soak and day-two maintenance.

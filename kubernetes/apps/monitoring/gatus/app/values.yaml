@@ -1,0 +1,56 @@
+# Gatus uptime dashboard. Endpoints probe the real user-facing HTTPS URLs behind
+# the internal gateway (via Pi-hole DNS), so a green board proves the full path.
+env:
+  - name: TZ
+    value: America/Denver
+persistence:
+  enabled: true
+  storageClassName: longhorn
+  size: 1Gi
+  mountPath: /data
+serviceMonitor:
+  enabled: true
+  interval: 1m
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+ingress:
+  enabled: false
+gateway:
+  enabled: false
+config:
+  storage:
+    type: sqlite
+    path: /data/data.db
+  ui:
+    title: "Homelab Status"
+    header: "Homelab"
+  endpoints:
+    - name: grafana
+      group: Observability
+      url: "https://grafana.lab.supermorphic.com/api/health"
+      interval: 1m
+      conditions:
+        - "[STATUS] == 200"
+        - "[BODY].database == ok"
+    - name: prometheus
+      group: Observability
+      url: "https://prometheus.lab.supermorphic.com/-/healthy"
+      interval: 1m
+      conditions:
+        - "[STATUS] == 200"
+    - name: alertmanager
+      group: Observability
+      url: "https://alertmanager.lab.supermorphic.com/-/healthy"
+      interval: 1m
+      conditions:
+        - "[STATUS] == 200"
+    - name: echo
+      group: Platform
+      url: "https://echo.lab.supermorphic.com/"
+      interval: 1m
+      conditions:
+        - "[STATUS] == 200"

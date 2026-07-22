@@ -362,7 +362,7 @@ flux-validate:
     kustomize build kubernetes/apps/kube-system/cilium/app >"$temp_dir/cilium.yaml"
     kustomize build kubernetes/apps/flux-system/flux-canary/app >"$temp_dir/canary.yaml"
 
-    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .metadata.name] | .[]' "$temp_dir/apps.yaml" | sort -u)" == $'cert-manager\ncert-manager-config\ncilium\necho\nenvoy-gateway\nexternal-dns-internal\nflux-canary\ninternal-gateway\nkube-prometheus-stack\nkube-prometheus-stack-config\nlonghorn\nlonghorn-config\nmetallb\nmetallb-config\nwildcard-certificate' ]]
+    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .metadata.name] | .[]' "$temp_dir/apps.yaml" | sort -u)" == $'cert-manager\ncert-manager-config\ncilium\necho\nenvoy-gateway\nexternal-dns-internal\nflux-canary\ngatus\ninternal-gateway\nkube-prometheus-stack\nkube-prometheus-stack-config\nlonghorn\nlonghorn-config\nmetallb\nmetallb-config\nwildcard-certificate' ]]
     [[ -z "$(rg '^apiVersion: (apps|extensions)/v1beta|^apiVersion: (networking.k8s.io|policy)/v1beta1' kubernetes --glob '*.yaml' || true)" ]]
 
     just kube cilium-validate
@@ -1176,3 +1176,79 @@ monitoring-verify: require-bash
 
     just kube foundation-verify
     echo 'Phase 10 monitoring acceptance passed: kube-prometheus-stack Ready (Prometheus, Alertmanager, Grafana, exporters), PVCs bound on Longhorn, HTTPRoutes accepted, and all three UIs reachable with trusted HTTPS through the internal gateway.'
+
+# Validate the Phase 10 Gatus source: files, wiring, namespace gateway label,
+# staged suspend, key values, HTTPRoute, and the pinned chart render.
+gatus-validate: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    base='kubernetes/apps/monitoring/gatus'
+    ks="$base/ks.yaml"
+    values="$base/app/values.yaml"
+    hr="$base/app/helmrelease.yaml"
+    repo="$base/app/helmrepository.yaml"
+    route="$base/app/httproute.yaml"
+    ns="$base/app/namespace.yaml"
+    temp_dir="$(mktemp -d /tmp/homelab-talos-gatus-validate.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+
+    for f in "$ks" "$values" "$hr" "$repo" "$route" "$ns" "$base/app/kustomization.yaml"; do
+      [[ -f "$f" ]] || { echo "Missing Phase 10 Gatus source: $f" >&2; exit 1; }
+    done
+    rg -qx '  - ./gatus/ks.yaml' kubernetes/apps/monitoring/kustomization.yaml || {
+      echo 'Refusing: ./gatus/ks.yaml is not listed in kubernetes/apps/monitoring/kustomization.yaml.' >&2
+      exit 1
+    }
+
+    suspend_state="$(yq -r '.spec.suspend // false' "$ks")"
+    [[ "$suspend_state" == 'true' || "$suspend_state" == 'false' ]]
+    [[ "$(yq -r '.metadata.labels."gateway.supermorphic.com/access"' "$ns")" == 'internal' ]]
+    [[ "$(yq ea -r '[.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'cilium,internal-gateway,longhorn' ]]
+    [[ "$(yq -r '.spec.chart.spec.version' "$hr")" == '1.5.0' ]]
+    [[ "$(yq -r '.spec.url' "$repo")" == 'https://twin.github.io/helm-charts' ]]
+    [[ "$(yq -r '.persistence.enabled' "$values")" == 'true' ]]
+    [[ "$(yq -r '.persistence.storageClassName' "$values")" == 'longhorn' ]]
+    [[ "$(yq -r '.spec.hostnames[0]' "$route")" == 'status.lab.supermorphic.com' ]]
+    [[ "$(yq -r '.spec.parentRefs[0].name' "$route")" == 'internal' ]]
+
+    kustomize build "$base/app" >/dev/null
+    printf 'apiVersion: v1\ngenerated: null\nrepositories: []\n' >"$temp_dir/repos.yaml"
+    HELM_REPOSITORY_CONFIG="$temp_dir/repos.yaml" HELM_REPOSITORY_CACHE="$temp_dir/cache" \
+      helm template gatus gatus --repo https://twin.github.io/helm-charts --version 1.5.0 --namespace gatus --values "$values" >/dev/null
+
+    echo 'Phase 10 Gatus source, wiring, namespace label, values, HTTPRoute, and pinned chart render passed validation.'
+
+# Verify the live Gatus app: Kustomization + HelmRelease Ready, PVC bound,
+# HTTPRoute accepted, the dashboard reachable via HTTPS, and foundation green.
+gatus-verify: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    ns='gatus'
+    gateway_ip='192.168.90.30'
+
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization gatus --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || { echo 'Gatus Kustomization is not Ready.' >&2; exit 1; }
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get helmrelease gatus --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || { echo 'Gatus HelmRelease is not Ready.' >&2; exit 1; }
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get pvc gatus --output jsonpath='{.status.phase}' 2>/dev/null)" == 'Bound' ]] || { echo 'Gatus PVC is not Bound.' >&2; exit 1; }
+
+    accepted=false
+    for _ in {1..18}; do
+      route="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get httproute gatus --output json 2>/dev/null)"
+      if [[ "$(yq -r '[.status.parents[].conditions[]? | select(.type == "Accepted") | .status] | unique | join(" ")' - <<<"$route")" == 'True' ]]; then accepted=true; break; fi
+      sleep 5
+    done
+    [[ "$accepted" == 'true' ]] || { echo 'Gatus HTTPRoute is not Accepted.' >&2; exit 1; }
+
+    dns_answer=''
+    for _ in {1..30}; do
+      dns_answer="$(dig +short @192.168.90.2 status.lab.supermorphic.com A | sort -u)"
+      [[ "$dns_answer" == "$gateway_ip" ]] && break
+      sleep 10
+    done
+    [[ "$dns_answer" == "$gateway_ip" ]] || { echo "Pi-hole returned '$dns_answer' for status, not $gateway_ip." >&2; exit 1; }
+    curl --silent --show-error --fail --max-time 15 --resolve "status.lab.supermorphic.com:443:$gateway_ip" https://status.lab.supermorphic.com/health >/dev/null
+
+    just kube foundation-verify
+    echo 'Phase 10 Gatus acceptance passed: Kustomization and HelmRelease Ready, PVC bound on Longhorn, HTTPRoute accepted, and the dashboard reachable with trusted HTTPS at status.lab.supermorphic.com.'
