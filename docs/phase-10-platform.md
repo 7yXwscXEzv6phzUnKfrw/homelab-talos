@@ -9,7 +9,7 @@ requirements — never by copying rendered YAML, KSOPS resources, PVCs, or data.
 | App | State |
 |---|---|
 | kube-prometheus-stack (Prometheus + Alertmanager + Grafana + exporters) | **Complete (2026-07-22)** |
-| Gatus | pending |
+| Gatus | **Complete (2026-07-22)** |
 | Homepage | pending |
 | Trivy Operator | pending |
 
@@ -103,3 +103,22 @@ routes on a namespace label change — a one-time
 `kubectl -n envoy-gateway-system rollout restart deploy/envoy-gateway` cleared its
 cache. The label is now in the namespace manifest and asserted by
 `monitoring-validate`, so future apps avoid this.
+
+## Gatus
+
+`kubernetes/apps/monitoring/gatus/`, chart `1.5.0` from `twin`, namespace `gatus`
+(baseline PodSecurity + gateway-access label), a single Kustomization
+(`dependsOn` cilium + longhorn + internal-gateway; no secret). Uptime history is
+sqlite on a 1Gi Longhorn PVC (`/data`); a ServiceMonitor exposes Gatus metrics to
+Prometheus. Endpoints probe the real user-facing HTTPS URLs (grafana, prometheus,
+alertmanager, echo) so a green board proves the full DNS→TLS→gateway path.
+Exposed at `gatus.lab.supermorphic.com`. The legacy ArgoCD/Traefik/Longhorn-UI
+endpoints were dropped (they don't exist on this cluster).
+
+Workflow: `just kube gatus-validate` → `just bootstrap gatus`
+(`GATUS_BOOTSTRAP_CONFIRM='bootstrap:phase10:gatus'`) → `just kube gatus-verify`.
+
+**Acceptance evidence (2026-07-22):** `gatus-verify` passed — Kustomization +
+HelmRelease Ready, PVC Bound on Longhorn, HTTPRoute Accepted, and the dashboard
+reachable with trusted HTTPS at `gatus.lab.supermorphic.com`; `foundation-verify`
+still green.
