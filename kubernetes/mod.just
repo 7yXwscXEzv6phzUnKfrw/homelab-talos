@@ -1209,7 +1209,7 @@ gatus-validate: require-bash
     [[ "$(yq -r '.spec.url' "$repo")" == 'https://twin.github.io/helm-charts' ]]
     [[ "$(yq -r '.persistence.enabled' "$values")" == 'true' ]]
     [[ "$(yq -r '.persistence.storageClassName' "$values")" == 'longhorn' ]]
-    [[ "$(yq -r '.spec.hostnames[0]' "$route")" == 'status.lab.supermorphic.com' ]]
+    [[ "$(yq -r '.spec.hostnames[0]' "$route")" == 'gatus.lab.supermorphic.com' ]]
     [[ "$(yq -r '.spec.parentRefs[0].name' "$route")" == 'internal' ]]
 
     kustomize build "$base/app" >/dev/null
@@ -1243,12 +1243,12 @@ gatus-verify: require-bash
 
     dns_answer=''
     for _ in {1..30}; do
-      dns_answer="$(dig +short @192.168.90.2 status.lab.supermorphic.com A | sort -u)"
+      dns_answer="$(dig +short @192.168.90.2 gatus.lab.supermorphic.com A | sort -u)"
       [[ "$dns_answer" == "$gateway_ip" ]] && break
       sleep 10
     done
-    [[ "$dns_answer" == "$gateway_ip" ]] || { echo "Pi-hole returned '$dns_answer' for status, not $gateway_ip." >&2; exit 1; }
-    curl --silent --show-error --fail --max-time 15 --resolve "status.lab.supermorphic.com:443:$gateway_ip" https://status.lab.supermorphic.com/health >/dev/null
+    [[ "$dns_answer" == "$gateway_ip" ]] || { echo "Pi-hole returned '$dns_answer' for gatus, not $gateway_ip." >&2; exit 1; }
+    curl --silent --show-error --fail --max-time 15 --resolve "gatus.lab.supermorphic.com:443:$gateway_ip" https://gatus.lab.supermorphic.com/health >/dev/null
 
     just kube foundation-verify
-    echo 'Phase 10 Gatus acceptance passed: Kustomization and HelmRelease Ready, PVC bound on Longhorn, HTTPRoute accepted, and the dashboard reachable with trusted HTTPS at status.lab.supermorphic.com.'
+    echo 'Phase 10 Gatus acceptance passed: Kustomization and HelmRelease Ready, PVC bound on Longhorn, HTTPRoute accepted, and the dashboard reachable with trusted HTTPS at gatus.lab.supermorphic.com.'

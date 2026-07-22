@@ -8,7 +8,7 @@ metadata:
     external-dns.k8s.io/audience: internal
 spec:
   hostnames:
-    - status.lab.supermorphic.com
+    - gatus.lab.supermorphic.com
   parentRefs:
     - group: gateway.networking.k8s.io
       kind: Gateway
