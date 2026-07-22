@@ -11,7 +11,7 @@ requirements — never by copying rendered YAML, KSOPS resources, PVCs, or data.
 | kube-prometheus-stack (Prometheus + Alertmanager + Grafana + exporters) | **Complete (2026-07-22)** |
 | Gatus | **Complete (2026-07-22)** |
 | Homepage | **Complete (2026-07-22)** |
-| Trivy Operator | pending |
+| Trivy Operator | **Complete (2026-07-22)** |
 
 ## Delivery pattern (every app)
 
@@ -150,3 +150,31 @@ homepage-verify`.
 **Acceptance evidence (2026-07-22):** `homepage-verify` passed — Kustomization
 Ready, deployment rolled out, HTTPRoute Accepted, dashboard reachable with trusted
 HTTPS at `homepage.lab.supermorphic.com`; `foundation-verify` still green.
+
+**Config note:** Homepage initializes any missing skeleton config file into
+`/app/config`, which is a read-only ConfigMap mount — a missing file crashes it
+with `EROFS`. All skeleton files must be shipped (including empty `docker.yaml`,
+`proxmox.yaml`, `custom.css`, `custom.js`).
+
+## Trivy Operator
+
+`kubernetes/apps/security/trivy-operator/`, chart `0.34.0` from Aqua, namespace
+`trivy-system` (privileged), a single Kustomization (`dependsOn` cilium; no
+exposure, no secret, no PVC). Continuously scans workload images/configs and
+publishes results as CRs (view with `kubectl get vulnerabilityreports -A`). Tuned
+for the homelab: concurrency 5, `ignoreUnfixed` + severity `MEDIUM,HIGH,CRITICAL`,
+a ServiceMonitor, and **SBOM generation + cluster-compliance disabled** (both
+write large/many CRs to etcd).
+
+**Talos incompatibility:** `infraAssessmentScannerEnabled: false`. Its
+node-collector does `mkdir /etc/systemd` on the host and fails on Talos's
+read-only host filesystem (`CreateContainerError`). The other four scanners
+(vulnerability, config-audit, RBAC, exposed-secret) work fine.
+
+Workflow: `just kube trivy-validate` → `just bootstrap trivy`
+(`TRIVY_BOOTSTRAP_CONFIRM='bootstrap:phase10:trivy-operator'`) → `just kube
+trivy-verify`.
+
+**Acceptance evidence (2026-07-22):** `trivy-verify` passed — Kustomization +
+HelmRelease Ready, operator rolled out, report CRDs installed; vulnerability scan
+jobs running; `foundation-verify` still green.
