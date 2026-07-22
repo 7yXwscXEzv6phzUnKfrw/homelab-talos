@@ -367,6 +367,57 @@ storage-secrets:
     mv -- "$temp_dir/nas-credentials.sops.yaml" "$target"
     echo "Wrote SOPS-encrypted $target (nas-credentials in longhorn-system)."
 
+# Write only the SOPS-encrypted Grafana admin Secret for kube-prometheus-stack
+# from GRAFANA_ADMIN_USER/GRAFANA_ADMIN_PASSWORD. Never echoes the password.
+monitoring-secrets:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    expected_confirmation='write:monitoring:grafana-admin:sops'
+    target='kubernetes/apps/monitoring/kube-prometheus-stack/app/grafana-admin.sops.yaml'
+    temp_dir="$(mktemp -d /tmp/homelab-talos-monitoring-secrets.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+    umask 077
+
+    just repo secrets
+    [[ -n "${GRAFANA_ADMIN_USER:-}" ]] || {
+      echo 'Set GRAFANA_ADMIN_USER to the Grafana admin username.' >&2
+      exit 1
+    }
+    [[ -n "${GRAFANA_ADMIN_PASSWORD:-}" ]] || {
+      echo 'Set GRAFANA_ADMIN_PASSWORD to the Grafana admin password.' >&2
+      exit 1
+    }
+    [[ "${#GRAFANA_ADMIN_PASSWORD}" -ge 12 ]] || {
+      echo 'Refusing: GRAFANA_ADMIN_PASSWORD must be at least 12 characters.' >&2
+      exit 1
+    }
+    [[ "${MONITORING_SECRETS_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to write the Grafana admin Secret.' >&2
+      echo "Set MONITORING_SECRETS_CONFIRM='$expected_confirmation' after reviewing the target." >&2
+      exit 1
+    }
+
+    export GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD
+    yq -n \
+      '.apiVersion = "v1" |
+       .kind = "Secret" |
+       .metadata.name = "grafana-admin-secret" |
+       .metadata.namespace = "monitoring" |
+       .type = "Opaque" |
+       .stringData."admin-user" = strenv(GRAFANA_ADMIN_USER) |
+       .stringData."admin-password" = strenv(GRAFANA_ADMIN_PASSWORD)' \
+      >"$temp_dir/grafana-admin.yaml"
+
+    sops --encrypt --filename-override "$target" \
+      "$temp_dir/grafana-admin.yaml" >"$temp_dir/grafana-admin.sops.yaml"
+    [[ "$(sops filestatus "$temp_dir/grafana-admin.sops.yaml" | yq -r '.encrypted')" == 'true' ]]
+    [[ "$(yq -r '.sops.age[].recipient' "$temp_dir/grafana-admin.sops.yaml" | sort -u)" == "$(yq -r '.creation_rules[1].age' .sops.yaml)" ]]
+    ! rg -Fq -- "$GRAFANA_ADMIN_PASSWORD" "$temp_dir/grafana-admin.sops.yaml"
+
+    mv -- "$temp_dir/grafana-admin.sops.yaml" "$target"
+    echo "Wrote SOPS-encrypted $target (grafana-admin-secret in monitoring)."
+
 # Run repository and declarative Talos source validation.
 verify: verify-files
     just talos source-validate
