@@ -256,3 +256,55 @@ apply-live node: validate
       --talosconfig "$talosconfig" \
       --file "$config" \
       --mode=no-reboot
+
+# Read-only checkpoint: report and verify the longhorn user volume and the
+# TPM-encrypted STATE/EPHEMERAL volumes on every node. No mutation, no confirmation.
+volume-status:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just repo require-bash
+
+    talosconfig='../clusterconfig/talosconfig'
+    [[ -f "$talosconfig" ]] || {
+      echo 'Missing ../clusterconfig/talosconfig; run just talos generate.' >&2
+      exit 1
+    }
+
+    status=0
+    for spec in 'nuc1:192.168.90.10' 'nuc2:192.168.90.11' 'nuc3:192.168.90.12'; do
+      node="${spec%%:*}"
+      ip="${spec#*:}"
+      common=(--talosconfig "$talosconfig" --nodes "$ip" --endpoints "$ip" --output yaml)
+
+      if ! vol="$(talosctl get volumestatuses "${common[@]}" 2>/dev/null)"; then
+        echo "  $node: talos API unreachable" >&2
+        status=1
+        continue
+      fi
+      mnt="$(talosctl get mountstatuses.block.talos.dev "${common[@]}" 2>/dev/null || true)"
+
+      lh_phase="$(yq ea -r 'select(.metadata.id == "u-longhorn") | .spec.phase' - <<<"$vol")"
+      lh_size="$(yq ea -r 'select(.metadata.id == "u-longhorn") | .spec.prettySize' - <<<"$vol")"
+      lh_enc="$(yq ea -r 'select(.metadata.id == "u-longhorn") | (.spec.encryptionProvider // "none")' - <<<"$vol")"
+      lh_target="$(yq ea -r 'select(.metadata.id == "u-longhorn") | .spec.target' - <<<"$mnt")"
+      lh_fs="$(yq ea -r 'select(.metadata.id == "u-longhorn") | .spec.filesystem' - <<<"$mnt")"
+      lh_detached="$(yq ea -r 'select(.metadata.id == "u-longhorn") | .spec.detached' - <<<"$mnt")"
+      state="$(yq ea -r 'select(.metadata.id == "STATE") | [.spec.phase, .spec.encryptionProvider] | join(" ")' - <<<"$vol")"
+      ephemeral="$(yq ea -r 'select(.metadata.id == "EPHEMERAL") | [.spec.phase, .spec.encryptionProvider] | join(" ")' - <<<"$vol")"
+
+      printf '  %-5s u-longhorn: %s %s enc=%s mount=%s fs=%s detached=%s | STATE: %s | EPHEMERAL: %s\n' \
+        "$node" "${lh_phase:-none}" "${lh_size:-?}" "$lh_enc" "${lh_target:-none}" "${lh_fs:-none}" "${lh_detached:-?}" "$state" "$ephemeral"
+
+      [[ "$lh_phase" == 'ready' && "$lh_target" == '/var/mnt/longhorn' && "$lh_fs" == 'xfs' && "$lh_detached" == 'false' && "$lh_enc" == 'none' ]] || {
+        echo "    ^ $node longhorn volume is not healthy (want ready, mounted at /var/mnt/longhorn, xfs, attached, unencrypted)." >&2
+        status=1
+      }
+      [[ "$state" == 'ready luks2' ]] || { echo "    ^ $node STATE volume is not ready+luks2." >&2; status=1; }
+      [[ "$ephemeral" == 'ready luks2' ]] || { echo "    ^ $node EPHEMERAL volume is not ready+luks2." >&2; status=1; }
+    done
+
+    [[ "$status" == '0' ]] || {
+      echo 'One or more node volumes are unhealthy.' >&2
+      exit 1
+    }
+    echo 'All node volumes healthy: longhorn ready and mounted at /var/mnt/longhorn (xfs, unencrypted); STATE and EPHEMERAL ready and luks2.'
