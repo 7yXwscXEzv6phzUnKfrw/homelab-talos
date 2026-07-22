@@ -37,6 +37,25 @@ direct-to-`main` commits are exceptional and must be followed by `just ci` on `m
 AI agents follow the same rules via [`AGENTS.md`](AGENTS.md) (canonical) and
 [`CLAUDE.md`](CLAUDE.md) (a thin `@AGENTS.md` adapter).
 
+### Agent-driven PR loop
+
+Most changes are made by an AI agent. The division of labor:
+
+| Step | Who |
+|---|---|
+| Plan approval (substantial or cross-cutting changes only) | agent proposes → **you approve** |
+| Branch → changes → staged commits → `just ci` → push → open PR | agent |
+| Review the PR diff and the green `ci` check | **you** |
+| Squash-merge | **you** |
+| Flux reconciles `main`; run guarded `just bootstrap …` rollouts | Flux / **you** |
+
+The agent owns branch-through-open-PR; you own review, merge, and rollout. The
+agent **never self-merges** and **never runs live cluster rollouts unprompted** —
+cluster-mutating `bootstrap …` recipes stay behind operator `*_CONFIRM` gates.
+Because merging to `main` deploys via Flux, the PR plus a green `ci` check is the
+review gate before anything reaches the cluster; branch protection makes that gate
+mandatory rather than conventional.
+
 ## Physical KVM Note
 
 When connecting the KVM's HDMI and USB cables, `nuc1` and `nuc3` can use their
