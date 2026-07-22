@@ -2,7 +2,8 @@
 
 ## Status
 
-**In progress — Longhorn source built, rollout pending final verified run.**
+**Complete (2026-07-22).** Longhorn is live and passed acceptance; both storage
+Kustomizations are durably active (`suspend: false`).
 Phase 9 is scoped to **Longhorn only** (replicated block storage for application
 config and state). The bulk media `/data` layer is **deferred to Phase 11** and
 will use SMB (`csi-driver-smb` against `//192.168.0.3/Prometheus`), because the
@@ -119,15 +120,23 @@ group (so they cover every volume): `daily-snapshot` (`0 2 * * *`, retain 7) and
 - A replica rebuild succeeds after a single-node reboot.
 - Cilium/Talos/etcd/foundation acceptance still green (`foundation-verify`).
 
-## Acceptance Evidence
+## Acceptance Evidence (2026-07-22)
 
-_To be recorded after the verified rollout:_
+`just bootstrap storage` reconciled `longhorn` → `longhorn-config` to Ready and
+`just kube storage-verify` passed:
 
-- `just bootstrap storage` output (both Kustomizations Ready, `storage-verify` pass).
-- `just kube storage-verify` evidence: three Longhorn nodes, disks at
-  `/var/mnt/longhorn`, default 2-replica StorageClass, backup target available,
-  recurring jobs present, test PVC replicas on two nodes.
-- Manual backup→restore and post-reboot replica-rebuild confirmation.
+> Phase 9 storage acceptance passed: Longhorn healthy on three nodes (disks at
+> `/var/mnt/longhorn`), default two-replica StorageClass, backup target available,
+> recurring jobs present, and a test PVC bound with replicas on two distinct nodes.
+
+- Backup target `cifs://192.168.0.3/Longhorn` reported **available** — CIFS mounts
+  from the Talos nodes without an extra kernel module.
+- All three Longhorn nodes Ready and schedulable; `foundation-verify` (Phase 7 +
+  Cilium/Talos/etcd) still green.
+
+**Recommended follow-up proofs** (not blocking; run when convenient): a manual
+backup→restore into a new PVC via the Longhorn UI, and a post-reboot replica
+rebuild via `just bootstrap reboot <node>`.
 
 ## Deferred to Phase 11
 

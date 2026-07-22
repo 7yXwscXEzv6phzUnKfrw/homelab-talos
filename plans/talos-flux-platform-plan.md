@@ -942,6 +942,15 @@ the old SSDs be wiped or reused.
 
 ## Phase 9: Storage
 
+Implementation evidence, the Longhorn architecture, the guarded workflow, and the
+recovery runbook are recorded in
+[`docs/phase-9-storage.md`](../docs/phase-9-storage.md). Phase 9 is complete
+(2026-07-22): Longhorn `1.12.0` is live on all three nodes (`/var/mnt/longhorn`,
+500 GiB cap, two replicas with hard anti-affinity), the default `longhorn`
+StorageClass is set, the CIFS backup target and daily snapshot/backup jobs are
+active, and `just kube storage-verify` passed. Recommended follow-up proofs (a
+manual backup→restore and a post-reboot replica rebuild) are noted in the doc.
+
 > **Scope (revised 2026-07-22): Phase 9 ships Longhorn only.** Steps 7–10 (NFS CSI
 > and the bulk media `/data` filesystem) are **deferred to Phase 11**. The UNAS Pro
 > has NFS disabled and serves SMB/CIFS shares; the media consumer (Plex) runs

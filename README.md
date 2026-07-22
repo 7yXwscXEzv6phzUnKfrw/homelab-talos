@@ -322,8 +322,10 @@ label fix are in [`docs/phase-7-foundation.md`](docs/phase-7-foundation.md). Pha
 is complete: the rolling-reboot, MetalLB failover, Flux-restart, and echo
 remove/recreate tests passed and the 24-hour soak held with no regressions
 ([`docs/phase-8-soak.md`](docs/phase-8-soak.md)) — closing the Phases 0–8
-foundation milestone, so the old SSDs are clear to wipe. Phase 9 (storage:
-Longhorn + UNAS NFS) is next; see [`plans/phase-9-storage.md`](plans/phase-9-storage.md). See
+foundation milestone, so the old SSDs are clear to wipe. Phase 9 is complete:
+Longhorn `1.12.0` replicated block storage is live with a CIFS backup target
+([`docs/phase-9-storage.md`](docs/phase-9-storage.md)); bulk media storage is
+deferred to Phase 11 over SMB. See
 [`docs/phase-3-installation.md`](docs/phase-3-installation.md) for installation
 evidence and [`docs/phase-4-bootstrap.md`](docs/phase-4-bootstrap.md) for the
 bootstrap interface and recovery record. Phase 5 commands and live evidence are
