@@ -6,6 +6,16 @@ metadata:
   namespace: monitoring
   annotations:
     external-dns.k8s.io/audience: internal
+    # Homepage auto-discovery (kubernetes.yaml gateway: true). No widget: the
+    # Grafana widget needs admin credentials, which must never be a cleartext
+    # annotation — wire it via a secret-backed HOMEPAGE_VAR if desired.
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Grafana"
+    gethomepage.dev/description: "Observability and visualization dashboards"
+    gethomepage.dev/group: "Monitoring"
+    gethomepage.dev/icon: "grafana.svg"
+    gethomepage.dev/href: "https://grafana.lab.supermorphic.com"
+    gethomepage.dev/pod-selector: "app.kubernetes.io/name=grafana"
 spec:
   hostnames:
     - grafana.lab.supermorphic.com
@@ -34,6 +44,15 @@ metadata:
   namespace: monitoring
   annotations:
     external-dns.k8s.io/audience: internal
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Prometheus"
+    gethomepage.dev/description: "Metrics collection and queries"
+    gethomepage.dev/group: "Monitoring"
+    gethomepage.dev/icon: "prometheus.svg"
+    gethomepage.dev/href: "https://prometheus.lab.supermorphic.com"
+    gethomepage.dev/pod-selector: "app.kubernetes.io/name=prometheus"
+    gethomepage.dev/widget.type: "prometheus"
+    gethomepage.dev/widget.url: "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
 spec:
   hostnames:
     - prometheus.lab.supermorphic.com
@@ -62,6 +81,13 @@ metadata:
   namespace: monitoring
   annotations:
     external-dns.k8s.io/audience: internal
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Alertmanager"
+    gethomepage.dev/description: "Alert routing and silences"
+    gethomepage.dev/group: "Monitoring"
+    gethomepage.dev/icon: "alertmanager.svg"
+    gethomepage.dev/href: "https://alertmanager.lab.supermorphic.com"
+    gethomepage.dev/pod-selector: "app.kubernetes.io/name=alertmanager"
 spec:
   hostnames:
     - alertmanager.lab.supermorphic.com

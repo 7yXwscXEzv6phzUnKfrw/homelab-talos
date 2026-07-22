@@ -5,6 +5,6 @@ color: slate
 iconStyle: theme
 headerStyle: clean
 layout:
-  Observability:
+  Monitoring:
     style: row
     columns: 4
