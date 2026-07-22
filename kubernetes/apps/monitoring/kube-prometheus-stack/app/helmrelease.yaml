@@ -14,8 +14,11 @@ spec:
         kind: HelmRepository
         name: prometheus-community
       version: 87.19.0
+  # Drift detection is disabled for this chart: it renders hundreds of objects
+  # (CRDs, rules), and correcting drift on every reconcile causes helm-controller
+  # "failed to wait for object to sync in-cache after patching" upgrade timeouts.
   driftDetection:
-    mode: enabled
+    mode: disabled
   install:
     crds: Create
     remediation:
