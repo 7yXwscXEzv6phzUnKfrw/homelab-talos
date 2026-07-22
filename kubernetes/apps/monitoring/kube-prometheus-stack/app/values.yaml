@@ -43,6 +43,10 @@ alertmanager:
         memory: 256Mi
 
 grafana:
+  # Recreate (not RollingUpdate): Grafana's PVC is ReadWriteOnce, so a rolling
+  # update would deadlock (new pod can't attach the volume the old pod holds).
+  deploymentStrategy:
+    type: Recreate
   admin:
     existingSecret: grafana-admin-secret
     userKey: admin-user

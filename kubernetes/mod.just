@@ -1098,6 +1098,9 @@ monitoring-validate: require-bash
     [[ "$(yq -r '.prometheus.prometheusSpec.retention' "$values")" == '30d' ]]
     [[ "$(yq -r '.prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage' "$values")" == '50Gi' ]]
     [[ "$(yq -r '.grafana.persistence.enabled' "$values")" == 'true' ]]
+    # Grafana's PVC is ReadWriteOnce; the Deployment must use Recreate or a rolling
+    # update deadlocks on the volume (see docs/phase-10-platform.md).
+    [[ "$(yq -r '.grafana.deploymentStrategy.type' "$values")" == 'Recreate' ]]
     for c in kubeProxy kubeControllerManager kubeScheduler kubeEtcd; do
       [[ "$(yq -r ".${c}.enabled" "$values")" == 'false' ]]
     done
@@ -1250,4 +1253,4 @@ gatus-verify: require-bash
     curl --silent --show-error --fail --max-time 15 --resolve "gatus.lab.supermorphic.com:443:$gateway_ip" https://gatus.lab.supermorphic.com/health >/dev/null
 
     just kube foundation-verify
-    echo 'Phase 10 Gatus acceptance passed: Kustomization and HelmRelease Ready, PVC bound on Longhorn, HTTPRoute accepted, and the dashboard reachable with trusted HTTPS at gatus.lab.supermorphic.com.'
+    echo 'Phase 10 Gatus acceptance passed: Kustomization and HelmRelease Ready, deployment rolled out (in-memory storage), HTTPRoute accepted, and the dashboard reachable with trusted HTTPS at gatus.lab.supermorphic.com.'
