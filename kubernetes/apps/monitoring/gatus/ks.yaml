@@ -8,7 +8,6 @@ metadata:
 spec:
   dependsOn:
     - name: cilium
-    - name: longhorn
     - name: internal-gateway
   interval: 1h
   path: ./kubernetes/apps/monitoring/gatus/app

@@ -1,17 +1,10 @@
 # Gatus uptime dashboard. Endpoints probe the real user-facing HTTPS URLs behind
 # the internal gateway (via Pi-hole DNS), so a green board proves the full path.
-deployment:
-  # Recreate (not RollingUpdate): the sqlite history is on a ReadWriteOnce Longhorn
-  # PVC, so the old pod must release it before the new pod can mount it.
-  strategy: Recreate
+# Storage is in-memory: uptime history resets on restart (fine for a status board)
+# and avoids a ReadWriteOnce PVC that deadlocks RollingUpdate on Longhorn.
 env:
   - name: TZ
     value: America/Denver
-persistence:
-  enabled: true
-  storageClassName: longhorn
-  size: 1Gi
-  mountPath: /data
 serviceMonitor:
   enabled: true
   interval: 1m
@@ -27,8 +20,7 @@ gateway:
   enabled: false
 config:
   storage:
-    type: sqlite
-    path: /data/data.db
+    type: memory
   ui:
     title: "Homelab Status"
     header: "Homelab"

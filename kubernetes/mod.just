@@ -1204,11 +1204,10 @@ gatus-validate: require-bash
     suspend_state="$(yq -r '.spec.suspend // false' "$ks")"
     [[ "$suspend_state" == 'true' || "$suspend_state" == 'false' ]]
     [[ "$(yq -r '.metadata.labels."gateway.supermorphic.com/access"' "$ns")" == 'internal' ]]
-    [[ "$(yq ea -r '[.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'cilium,internal-gateway,longhorn' ]]
+    [[ "$(yq ea -r '[.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'cilium,internal-gateway' ]]
     [[ "$(yq -r '.spec.chart.spec.version' "$hr")" == '1.5.0' ]]
     [[ "$(yq -r '.spec.url' "$repo")" == 'https://twin.github.io/helm-charts' ]]
-    [[ "$(yq -r '.persistence.enabled' "$values")" == 'true' ]]
-    [[ "$(yq -r '.persistence.storageClassName' "$values")" == 'longhorn' ]]
+    [[ "$(yq -r '.config.storage.type' "$values")" == 'memory' ]]
     [[ "$(yq -r '.spec.hostnames[0]' "$route")" == 'gatus.lab.supermorphic.com' ]]
     [[ "$(yq -r '.spec.parentRefs[0].name' "$route")" == 'internal' ]]
 
