@@ -10,6 +10,33 @@ The canonical design and rollout order are in
 there before enabling a new phase. Physical preflight evidence is in
 [`docs/phase-0-preflight.md`](docs/phase-0-preflight.md).
 
+## Development workflow
+
+`main` is the Flux **production deployment boundary** — Flux reconciles it onto the
+live cluster — so changes go through a branch and a pull request, not direct commits
+to `main`:
+
+```bash
+git switch main && git pull --ff-only
+git switch -c feat/<short-description>
+# ... make changes ...
+mise exec -- just ci            # cluster-independent, secret-free validation gate
+git add -A && git commit -m "..."
+git push -u origin HEAD
+gh pr create
+```
+
+`just ci` is the single validation contract — the same command runs locally and in
+GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) on every PR
+and push to `main`. It needs the mise toolchain and network egress (Helm pulls
+public charts) but **no kubeconfig, SOPS age key, or cluster access**. Cluster-
+dependent checks (`*-verify`, `*-status`, `bootstrap`, `pihole-status`) remain
+local/operator-only. Squash-merge once the `ci` check is green; emergency
+direct-to-`main` commits are exceptional and must be followed by `just ci` on `main`.
+
+AI agents follow the same rules via [`AGENTS.md`](AGENTS.md) (canonical) and
+[`CLAUDE.md`](CLAUDE.md) (a thin `@AGENTS.md` adapter).
+
 ## Physical KVM Note
 
 When connecting the KVM's HDMI and USB cables, `nuc1` and `nuc3` can use their
