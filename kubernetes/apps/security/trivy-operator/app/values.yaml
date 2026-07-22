@@ -7,6 +7,10 @@ operator:
   scanJobsConcurrentLimit: 5
   clusterComplianceEnabled: false
   sbomGenerationEnabled: false
+  # The infra-assessment node-collector does `mkdir /etc/systemd` on the host,
+  # which fails on Talos's read-only host filesystem (CreateContainerError). The
+  # other four scanners work fine, so disable just this one.
+  infraAssessmentScannerEnabled: false
 trivy:
   # Only actionable, meaningful findings: fixable, MEDIUM and above.
   ignoreUnfixed: true

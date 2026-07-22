@@ -1350,6 +1350,8 @@ trivy-validate: require-bash
     [[ "$(yq -r '.spec.url' "$repo")" == 'https://aquasecurity.github.io/helm-charts' ]]
     [[ "$(yq -r '.operator.sbomGenerationEnabled' "$values")" == 'false' ]]
     [[ "$(yq -r '.operator.clusterComplianceEnabled' "$values")" == 'false' ]]
+    # infra-assessment cannot run on Talos (read-only host); keep it disabled.
+    [[ "$(yq -r '.operator.infraAssessmentScannerEnabled' "$values")" == 'false' ]]
     [[ "$(yq -r '.trivy.ignoreUnfixed' "$values")" == 'true' ]]
     [[ "$(yq -r '.serviceMonitor.enabled' "$values")" == 'true' ]]
 
