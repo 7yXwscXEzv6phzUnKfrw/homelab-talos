@@ -29,6 +29,7 @@ config:
     title: "Homelab Status"
     header: "Homelab"
   endpoints:
+    # Observability UIs (black-box, through the internal gateway).
     - name: grafana
       group: Observability
       url: "https://grafana.lab.supermorphic.com/api/health"
@@ -48,9 +49,25 @@ config:
       interval: 1m
       conditions:
         - "[STATUS] == 200"
+    # Platform edge: proves the Envoy gateway data path + wildcard TLS end to end.
     - name: echo
       group: Platform
       url: "https://echo.lab.supermorphic.com/"
       interval: 1m
+      conditions:
+        - "[STATUS] == 200"
+    # Longhorn UI probed in-cluster so the unauthenticated admin UI is not exposed
+    # to the LAN. Longhorn engine/replica/backup health lives in Prometheus.
+    - name: longhorn-ui
+      group: Storage
+      url: "http://longhorn-frontend.longhorn-system.svc.cluster.local/"
+      interval: 2m
+      conditions:
+        - "[STATUS] == 200"
+    # External dependency cert-manager relies on for wildcard-cert renewal.
+    - name: letsencrypt-acme
+      group: External
+      url: "https://acme-v02.api.letsencrypt.org/directory"
+      interval: 10m
       conditions:
         - "[STATUS] == 200"
