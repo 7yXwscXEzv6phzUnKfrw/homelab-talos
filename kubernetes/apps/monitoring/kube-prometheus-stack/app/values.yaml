@@ -43,10 +43,11 @@ alertmanager:
         memory: 256Mi
 
 grafana:
-  # Recreate (not RollingUpdate): Grafana's PVC is ReadWriteOnce, so a rolling
-  # update would deadlock (new pod can't attach the volume the old pod holds).
-  deploymentStrategy:
-    type: Recreate
+  # NOTE (deferred): Grafana's PVC is ReadWriteOnce, so this Deployment should use
+  # deploymentStrategy.type: Recreate before its next pod roll (see README
+  # "ReadWriteOnce volumes require the Recreate deployment strategy"). Applying it
+  # via a live KPS upgrade currently trips a helm-controller in-cache-sync timeout;
+  # apply during a maintenance window (or scale Grafana to 0 first).
   admin:
     existingSecret: grafana-admin-secret
     userKey: admin-user
