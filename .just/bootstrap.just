@@ -49,7 +49,7 @@ preflight:
       [[ "$(yq ea -r 'select(.metadata.id == "EPHEMERAL") | .spec.encryptionProvider' - <<<"$volume_state")" == 'luks2' ]]
       [[ "$(yq ea -r 'select(.metadata.id == "EPHEMERAL") | .spec.size' - <<<"$volume_state")" == '161061273600' ]]
       [[ "$(yq ea -r 'select(.metadata.id == "u-longhorn") | .spec.phase' - <<<"$volume_state")" == 'ready' ]]
-      [[ "$(yq ea -r 'select(.metadata.id == "u-longhorn") | .spec.size' - <<<"$volume_state")" == '836832854016' ]]
+      [[ "$(yq ea -r 'select(.metadata.id == "u-longhorn") | .spec.size' - <<<"$volume_state")" == '536870912000' ]]
 
       time_state="$(talosctl get timestatus "${common[@]}")"
       [[ "$(yq -r '.spec.synced' - <<<"$time_state")" == 'true' ]]
@@ -335,7 +335,7 @@ verify:
       volume_state="$(talosctl get volumestatuses "${common[@]}")"
       [[ "$(yq ea -r 'select(.metadata.id == "STATE") | [.spec.phase, .spec.encryptionProvider, .spec.size] | join(" ")' - <<<"$volume_state")" == 'ready luks2 104857600' ]]
       [[ "$(yq ea -r 'select(.metadata.id == "EPHEMERAL") | [.spec.phase, .spec.encryptionProvider, .spec.size] | join(" ")' - <<<"$volume_state")" == 'ready luks2 161061273600' ]]
-      [[ "$(yq ea -r 'select(.metadata.id == "u-longhorn") | [.spec.phase, .spec.filesystem, .spec.size] | join(" ")' - <<<"$volume_state")" == 'ready xfs 836832854016' ]]
+      [[ "$(yq ea -r 'select(.metadata.id == "u-longhorn") | [.spec.phase, .spec.filesystem, .spec.size] | join(" ")' - <<<"$volume_state")" == 'ready xfs 536870912000' ]]
 
       mount_state="$(talosctl get mountstatuses.block.talos.dev "${common[@]}")"
       [[ "$(yq ea -r 'select(.metadata.id == "u-longhorn") | [.spec.target, .spec.filesystem, .spec.readOnly, .spec.detached] | join(" ")' - <<<"$mount_state")" == '/var/mnt/longhorn xfs false false' ]]
@@ -1071,14 +1071,15 @@ reboot node:
 
     echo "Reboot recovery passed for $node: Secure Boot and TPM auto-unlock, three-member etcd with no alarms, MetalLB, DNS, and trusted HTTPS are healthy."
 
-# Reset only the longhorn user-volume partition on one node and reboot so Talos
-# reprovisions it at the configured (smaller) maxSize. Talos never shrinks a
-# volume in place, so this is how it is resized down. Refuses unless the cluster
-# is healthy and the node's live volume config already targets the new size.
-# Wipes ONLY the user disk nvme0n1p5; STATE, EPHEMERAL, and etcd are preserved.
-# Destructive to the longhorn volume: run only while it is empty (pre-Longhorn or
-# after a full replica evacuation).
-wipe-recreate-longhorn node:
+# Shrink/recreate the longhorn user-volume on one node to the configured maxSize.
+# Talos never shrinks a user volume in place, so this applies a config with the
+# volume removed (--mode=reboot, so p5 unmounts on the boot), wipes+drops
+# nvme0n1p5, then applies the original config (--mode=reboot) so Talos reprovisions
+# p5 at the configured size. Two reboots. Refuses unless the cluster is healthy and
+# the rendered config targets 500GiB. Wipes ONLY nvme0n1p5; STATE, EPHEMERAL, and
+# etcd are preserved. Run only while the volume is empty (pre-Longhorn or after a
+# full replica evacuation). Verified on nuc1 2026-07-22.
+resize-longhorn node:
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -1097,19 +1098,18 @@ wipe-recreate-longhorn node:
     kubeconfig='kubeconfig'
     nodes_csv='192.168.90.10,192.168.90.11,192.168.90.12'
     expected_names=$'nuc1\nnuc2\nnuc3'
-    partition='/dev/nvme0n1p5'
-    expected_max='536870912000'
-    expected_confirmation="wipe-recreate-longhorn:${node}:${node_ip}"
+    config="clusterconfig/${node}.yaml"
+    partition='nvme0n1p5'
+    expected_confirmation="resize-longhorn:${node}:${node_ip}"
 
     just repo require-bash
-    [[ -f "$talosconfig" ]] || {
-      echo 'Missing clusterconfig/talosconfig; run just talos generate.' >&2
-      exit 1
-    }
-    [[ -f "$kubeconfig" ]] || {
-      echo 'Missing ignored kubeconfig.' >&2
-      exit 1
-    }
+    for f in "$talosconfig" "$kubeconfig" "$config"; do
+      [[ -f "$f" ]] || { echo "Missing $f; run just talos generate." >&2; exit 1; }
+    done
+
+    node_up() { talosctl --talosconfig "$talosconfig" --nodes "$node_ip" --endpoints "$node_ip" version >/dev/null 2>&1; }
+    node_etcd_ok() { [[ "$(talosctl --talosconfig "$talosconfig" --nodes "$node_ip" --endpoints "$nodes_csv" etcd members 2>/dev/null | awk 'NR > 1 && NF {c++} END {print c + 0}')" == '3' ]]; }
+    node_ready() { [[ "$(kubectl --kubeconfig "$kubeconfig" get node "$node" --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]]; }
 
     cluster_healthy() {
       local nodes_json ready names members member_count member_names alarms alarm_rows
@@ -1128,120 +1128,87 @@ wipe-recreate-longhorn node:
       [[ "$alarm_rows" == '0' ]] || return 1
     }
 
-    announcer() {
-      kubectl --kubeconfig "$kubeconfig" get servicel2statuses.metallb.io --all-namespaces --output json 2>/dev/null \
-        | yq -r '[.items[].status.node] | join(" ")'
+    await_reboot() {
+      local label="$1" i
+      echo "  [$label] waiting for $node to drop..."
+      for i in $(seq 1 45); do node_up || break; sleep 2; done
+      echo "  [$label] waiting for $node talos API to return..."
+      for i in $(seq 1 90); do node_up && break; sleep 5; done
+      node_up || { echo "  [$label] $node talos API did not return." >&2; return 1; }
+      echo "  [$label] waiting for etcd 3 members..."
+      for i in $(seq 1 24); do node_etcd_ok && break; sleep 5; done
+      node_etcd_ok || { echo "  [$label] etcd did not return to three members." >&2; return 1; }
+      echo "  [$label] waiting for $node Ready..."
+      for i in $(seq 1 36); do node_ready && break; sleep 5; done
+      node_ready || { echo "  [$label] $node did not return to Ready." >&2; return 1; }
     }
 
-    node_ready() {
-      kubectl --kubeconfig "$kubeconfig" get node "$node" --output json 2>/dev/null \
-        | yq -r '[.status.conditions[] | select(.type == "Ready") | .status][0]' 2>/dev/null
-    }
-
-    echo "=== pre-wipe health gate ==="
+    echo "=== pre-resize health gate ==="
     cluster_healthy || {
-      echo "Refusing to wipe $node: the cluster is not fully healthy (three Ready nodes, three etcd members, no alarms)." >&2
+      echo "Refusing to resize $node: the cluster is not fully healthy." >&2
+      exit 1
+    }
+    cfg_max="$(yq ea 'select(.kind == "UserVolumeConfig" and .name == "longhorn") | .provisioning.maxSize' "$config")"
+    [[ "$cfg_max" == '500GiB' ]] || {
+      echo "Refusing: $config u-longhorn maxSize='$cfg_max', expected '500GiB'." >&2
+      exit 1
+    }
+    current_size="$(talosctl --talosconfig "$talosconfig" --nodes "$node_ip" --endpoints "$node_ip" get volumestatus u-longhorn --output jsonpath='{.spec.size}' 2>/dev/null || true)"
+    echo "Cluster healthy. $node u-longhorn is currently ${current_size:-unknown} bytes; target 500GiB (536870912000)."
+
+    [[ "${TALOS_RESIZE_LONGHORN_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo "Refusing to resize the longhorn volume on $node (two reboots; wipes $partition)." >&2
+      echo "Set TALOS_RESIZE_LONGHORN_CONFIRM='$expected_confirmation' and rerun after confirming the volume is empty (pre-Longhorn)." >&2
       exit 1
     }
 
-    cfg_max="$(talosctl get volumeconfig u-longhorn --nodes "$node_ip" --endpoints "$node_ip" --talosconfig "$talosconfig" --output jsonpath='{.spec.provisioning.partitionSpec.maxSize}' 2>/dev/null || true)"
-    [[ "$cfg_max" == "$expected_max" ]] || {
-      echo "Refusing: $node u-longhorn config maxSize='$cfg_max', expected '$expected_max' (500GiB)." >&2
-      echo "Apply the resized machine config first (just talos apply-live $node) so the reprovision lands at the new size." >&2
-      exit 1
-    }
-    current_size="$(talosctl get volumestatus u-longhorn --nodes "$node_ip" --endpoints "$node_ip" --talosconfig "$talosconfig" --output jsonpath='{.spec.size}' 2>/dev/null || true)"
-    echo "Cluster healthy. $node u-longhorn is currently $current_size bytes; config targets $expected_max (500GiB)."
-    announcer_before="$(announcer)"
-    echo "MetalLB is announcing 192.168.90.30 from: ${announcer_before:-<none>}"
+    tmp="$(mktemp -d /tmp/homelab-talos-resize.XXXXXX)"
+    trap 'rm -rf -- "$tmp"' EXIT
+    yq ea 'select((.kind == "UserVolumeConfig" and .name == "longhorn") | not)' "$config" >"$tmp/released.yaml"
+    talosctl validate --config "$tmp/released.yaml" --mode metal >/dev/null
 
-    [[ "${TALOS_WIPE_RECREATE_CONFIRM:-}" == "$expected_confirmation" ]] || {
-      echo "Refusing to wipe and recreate the longhorn volume on $node." >&2
-      echo "Set TALOS_WIPE_RECREATE_CONFIRM='$expected_confirmation' and rerun after confirming the volume is empty (pre-Longhorn)." >&2
+    echo "=== 1/3 release: apply the volume-less config to $node (--mode=reboot) ==="
+    talosctl --talosconfig "$talosconfig" --nodes "$node_ip" --endpoints "$node_ip" apply-config --file "$tmp/released.yaml" --mode=reboot
+    await_reboot release
+    [[ -z "$(talosctl --talosconfig "$talosconfig" --nodes "$node_ip" --endpoints "$node_ip" get volumestatus u-longhorn --output jsonpath='{.spec.phase}' 2>/dev/null)" ]] || {
+      echo "Refusing to wipe: u-longhorn is still present on $node after the release reboot." >&2
       exit 1
     }
 
-    echo "Resetting user disk $partition on $node ($node_ip) and rebooting; STATE, EPHEMERAL, and etcd are preserved. etcd quorum drops to 2/3 until it returns."
-    talosctl --talosconfig "$talosconfig" --nodes "$node_ip" --endpoints "$node_ip" reset \
-      --wipe-mode user-disks \
-      --user-disks-to-wipe "$partition" \
-      --reboot \
-      --graceful=false
+    echo "=== 2/3 wipe: drop $partition on $node (now unmounted) ==="
+    talosctl --talosconfig "$talosconfig" --nodes "$node_ip" --endpoints "$node_ip" wipe disk "$partition" --drop-partition
 
-    if rg -qw "$node" <<<"$announcer_before"; then
-      echo "=== $node announced 192.168.90.30; watching MetalLB fail the announcement over ==="
-      moved=false
-      for _ in {1..90}; do
-        current="$(announcer)"
-        if [[ -n "$current" ]] && ! rg -qw "$node" <<<"$current"; then
-          echo "  192.168.90.30 now announced from: $current"
-          moved=true
-          break
-        fi
-        sleep 2
-      done
-      [[ "$moved" == 'true' ]] || echo "Warning: did not observe MetalLB failover away from $node within the window." >&2
-    fi
+    echo "=== 3/3 restore: apply the original config to $node (--mode=reboot) ==="
+    talosctl --talosconfig "$talosconfig" --nodes "$node_ip" --endpoints "$node_ip" apply-config --file "$config" --mode=reboot
+    await_reboot restore
 
-    echo "=== waiting for $node to drop ==="
-    for _ in {1..60}; do
-      [[ "$(node_ready)" != 'True' ]] && break
-      sleep 2
-    done
-
-    echo "=== waiting for $node to return Ready ==="
-    ready_state=''
-    for _ in {1..90}; do
-      ready_state="$(node_ready)"
-      [[ "$ready_state" == 'True' ]] && break
-      sleep 5
-    done
-    [[ "$ready_state" == 'True' ]] || {
-      echo "Node $node did not return to Ready after the reset." >&2
-      exit 1
-    }
-
-    echo "=== verifying Secure Boot and TPM volume auto-unlock on $node ==="
-    common=(--talosconfig "$talosconfig" --nodes "$node_ip" --endpoints "$node_ip" --output yaml)
-    security_state="$(talosctl get securitystate "${common[@]}")"
-    [[ "$(yq -r '.spec.secureBoot' - <<<"$security_state")" == 'true' ]] || {
-      echo "$node did not report Secure Boot after the reset." >&2
-      exit 1
-    }
-    [[ "$(yq -r '.spec.bootedWithUKI' - <<<"$security_state")" == 'true' ]]
-    volume_state="$(talosctl get volumestatuses "${common[@]}")"
-    [[ "$(yq ea -r 'select(.metadata.id == "STATE") | [.spec.phase, .spec.encryptionProvider] | join(" ")' - <<<"$volume_state")" == 'ready luks2' ]] || {
-      echo "$node STATE volume did not unlock via TPM after the reset." >&2
-      exit 1
-    }
-    [[ "$(yq ea -r 'select(.metadata.id == "EPHEMERAL") | [.spec.phase, .spec.encryptionProvider] | join(" ")' - <<<"$volume_state")" == 'ready luks2' ]] || {
-      echo "$node EPHEMERAL volume did not unlock via TPM after the reset." >&2
-      exit 1
-    }
-
-    echo "=== verifying u-longhorn was recreated at the new size ==="
+    echo "=== verifying u-longhorn reprovisioned at ~500GiB with Secure Boot and TPM ==="
+    volume_state="$(talosctl --talosconfig "$talosconfig" --nodes "$node_ip" --endpoints "$node_ip" get volumestatuses --output yaml)"
     lh_phase="$(yq ea -r 'select(.metadata.id == "u-longhorn") | .spec.phase' - <<<"$volume_state")"
     lh_size="$(yq ea -r 'select(.metadata.id == "u-longhorn") | .spec.size' - <<<"$volume_state")"
     [[ "$lh_phase" == 'ready' ]] || {
-      echo "$node u-longhorn is not ready after recreate (phase=$lh_phase)." >&2
+      echo "$node u-longhorn is not ready after resize (phase=$lh_phase)." >&2
       exit 1
     }
     [[ "$lh_size" -gt 400000000000 && "$lh_size" -lt 600000000000 ]] || {
-      echo "$node u-longhorn size $lh_size is not the expected ~500GiB after recreate (was it actually wiped?)." >&2
+      echo "$node u-longhorn size $lh_size is not the expected ~500GiB after resize." >&2
       exit 1
     }
-    echo "  u-longhorn recreated: phase=$lh_phase size=$lh_size bytes (~$((lh_size / 1024 / 1024 / 1024)) GiB)"
+    security_state="$(talosctl --talosconfig "$talosconfig" --nodes "$node_ip" --endpoints "$node_ip" get securitystate --output yaml)"
+    [[ "$(yq -r '.spec.secureBoot' - <<<"$security_state")" == 'true' ]] || {
+      echo "$node did not report Secure Boot after resize." >&2
+      exit 1
+    }
+    [[ "$(yq ea -r 'select(.metadata.id == "STATE") | [.spec.phase, .spec.encryptionProvider] | join(" ")' - <<<"$volume_state")" == 'ready luks2' ]]
+    [[ "$(yq ea -r 'select(.metadata.id == "EPHEMERAL") | [.spec.phase, .spec.encryptionProvider] | join(" ")' - <<<"$volume_state")" == 'ready luks2' ]]
+    echo "  u-longhorn: phase=$lh_phase size=$lh_size (~$((lh_size / 1024 / 1024 / 1024)) GiB)"
 
-    echo "=== waiting for etcd to return to three healthy members ==="
-    for _ in {1..60}; do
-      cluster_healthy && break
-      sleep 5
-    done
+    echo "=== waiting for full cluster health ==="
+    for _ in {1..24}; do cluster_healthy && break; sleep 5; done
     cluster_healthy || {
-      echo "Cluster did not return to full health after the $node wipe." >&2
+      echo "Cluster did not return to full health after the $node resize." >&2
       exit 1
     }
-
     just kube foundation-verify
 
-    echo "Volume recreate passed for $node: u-longhorn reprovisioned at ~500GiB, Secure Boot and TPM auto-unlock, three-member etcd with no alarms, MetalLB, DNS, and trusted HTTPS are healthy."
+    echo "Resize passed for $node: u-longhorn reprovisioned to ~500GiB, Secure Boot and TPM auto-unlock, three-member etcd, and foundation acceptance are healthy."
