@@ -1,0 +1,2 @@
+---
+# No Docker integration; Homepage reads Kubernetes via the API.
