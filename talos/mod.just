@@ -74,8 +74,8 @@ validate: source-validate
       [[ "$(yq ea -r 'select(.kind == "VolumeConfig") | select(.name == "EPHEMERAL") | .encryption.keys[0].lockToState' "$file")" == 'true' ]]
 
       [[ "$(yq ea -r 'select(.kind == "UserVolumeConfig") | select(.name == "longhorn") | .provisioning.diskSelector.match' "$file")" == 'system_disk' ]]
-      [[ "$(yq ea -r 'select(.kind == "UserVolumeConfig") | select(.name == "longhorn") | .provisioning.minSize' "$file")" == '700GiB' ]]
-      [[ "$(yq ea -r 'select(.kind == "UserVolumeConfig") | select(.name == "longhorn") | .provisioning.grow' "$file")" == 'true' ]]
+      [[ "$(yq ea -r 'select(.kind == "UserVolumeConfig") | select(.name == "longhorn") | .provisioning.maxSize' "$file")" == '500GiB' ]]
+      [[ "$(yq ea -r 'select(.kind == "UserVolumeConfig") | select(.name == "longhorn") | .provisioning.grow' "$file")" == 'null' ]]
       [[ "$(yq ea -r 'select(.kind == "UserVolumeConfig") | select(.name == "longhorn") | .filesystem.type' "$file")" == 'xfs' ]]
       [[ "$(yq ea -r 'select(.kind == "UserVolumeConfig") | select(.name == "longhorn") | .encryption' "$file")" == 'null' ]]
     done

@@ -9,6 +9,18 @@ machine:
     hostDNS:
       enabled: true
       forwardKubeDNSToHost: true
+  kubelet:
+    extraMounts:
+      # Longhorn's manager and CSI pods bind-mount their data directory, so the
+      # /var/mnt/longhorn user volume must be exposed into the kubelet mount
+      # namespace with shared (rshared) propagation. Required for Longhorn on Talos.
+      - destination: /var/mnt/longhorn
+        type: bind
+        source: /var/mnt/longhorn
+        options:
+          - bind
+          - rshared
+          - rw
   nodeLabels:
     # All three nodes are schedulable control planes that also serve workloads
     # and MetalLB LoadBalancer traffic. Talos adds

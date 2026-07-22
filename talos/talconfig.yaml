@@ -70,7 +70,6 @@ controlPlane:
       provisioning:
         diskSelector:
           match: system_disk
-        minSize: 700GiB
-        grow: true
+        maxSize: 500GiB
       filesystem:
         type: xfs
