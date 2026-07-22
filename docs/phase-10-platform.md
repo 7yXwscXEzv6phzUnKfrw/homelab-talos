@@ -10,7 +10,7 @@ requirements — never by copying rendered YAML, KSOPS resources, PVCs, or data.
 |---|---|
 | kube-prometheus-stack (Prometheus + Alertmanager + Grafana + exporters) | **Complete (2026-07-22)** |
 | Gatus | **Complete (2026-07-22)** |
-| Homepage | pending |
+| Homepage | **Complete (2026-07-22)** |
 | Trivy Operator | pending |
 
 ## Delivery pattern (every app)
@@ -119,6 +119,34 @@ Workflow: `just kube gatus-validate` → `just bootstrap gatus`
 (`GATUS_BOOTSTRAP_CONFIRM='bootstrap:phase10:gatus'`) → `just kube gatus-verify`.
 
 **Acceptance evidence (2026-07-22):** `gatus-verify` passed — Kustomization +
-HelmRelease Ready, PVC Bound on Longhorn, HTTPRoute Accepted, and the dashboard
-reachable with trusted HTTPS at `gatus.lab.supermorphic.com`; `foundation-verify`
-still green.
+HelmRelease Ready, HTTPRoute Accepted, and the dashboard reachable with trusted
+HTTPS at `gatus.lab.supermorphic.com`; `foundation-verify` still green.
+
+**Storage note:** Gatus started on a sqlite PVC (Longhorn, ReadWriteOnce) which
+deadlocked RollingUpdate on the first config update (see the README RWO note). It
+was switched to `storage.type: memory` — no PVC, no deadlock; uptime history
+resets on restart, which is fine for a status board.
+
+## Homepage
+
+`kubernetes/apps/monitoring/homepage/`, image `v1.13.2`, raw manifests (not Helm),
+namespace `homepage` (baseline PodSecurity + gateway-access label), a single
+Kustomization (`dependsOn` cilium + internal-gateway; no PVC, no secret). Config
+is a hashed ConfigMap so a config change rolls the pod. A read-only ClusterRole
+lets the Kubernetes/Gateway widgets list nodes/pods/namespaces/HTTPRoutes.
+Rebuilt from the legacy requirements but **dropped** the ArgoCD API token, the
+Traefik/proxmox integrations, and the cleartext-password widget annotation;
+services link to Grafana/Prometheus/Alertmanager plus a no-auth Gatus uptime
+widget. Exposed at `homepage.lab.supermorphic.com`.
+
+Cluster CPU/memory widgets render empty until **metrics-server** is installed
+(not present on Talos by default); pod counts, node status, links, and the Gatus
+widget work without it.
+
+Workflow: `just kube homepage-validate` → `just bootstrap homepage`
+(`HOMEPAGE_BOOTSTRAP_CONFIRM='bootstrap:phase10:homepage'`) → `just kube
+homepage-verify`.
+
+**Acceptance evidence (2026-07-22):** `homepage-verify` passed — Kustomization
+Ready, deployment rolled out, HTTPRoute Accepted, dashboard reachable with trusted
+HTTPS at `homepage.lab.supermorphic.com`; `foundation-verify` still green.
