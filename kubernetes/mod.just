@@ -362,7 +362,7 @@ flux-validate:
     kustomize build kubernetes/apps/kube-system/cilium/app >"$temp_dir/cilium.yaml"
     kustomize build kubernetes/apps/flux-system/flux-canary/app >"$temp_dir/canary.yaml"
 
-    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .metadata.name] | .[]' "$temp_dir/apps.yaml" | sort -u)" == $'cert-manager\ncert-manager-config\ncilium\necho\nenvoy-gateway\nexternal-dns-internal\nflux-canary\ngatus\ninternal-gateway\nkube-prometheus-stack\nkube-prometheus-stack-config\nlonghorn\nlonghorn-config\nmetallb\nmetallb-config\nwildcard-certificate' ]]
+    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .metadata.name] | .[]' "$temp_dir/apps.yaml" | sort -u)" == $'cert-manager\ncert-manager-config\ncilium\necho\nenvoy-gateway\nexternal-dns-internal\nflux-canary\ngatus\nhomepage\ninternal-gateway\nkube-prometheus-stack\nkube-prometheus-stack-config\nlonghorn\nlonghorn-config\nmetallb\nmetallb-config\nwildcard-certificate' ]]
     [[ -z "$(rg '^apiVersion: (apps|extensions)/v1beta|^apiVersion: (networking.k8s.io|policy)/v1beta1' kubernetes --glob '*.yaml' || true)" ]]
 
     just kube cilium-validate
@@ -1251,3 +1251,72 @@ gatus-verify: require-bash
 
     just kube foundation-verify
     echo 'Phase 10 Gatus acceptance passed: Kustomization and HelmRelease Ready, deployment rolled out (in-memory storage), HTTPRoute accepted, and the dashboard reachable with trusted HTTPS at gatus.lab.supermorphic.com.'
+
+# Validate the Phase 10 Homepage source: files, wiring, namespace gateway label,
+# dependency graph, pinned image, allowed-hosts, HTTPRoute, and the render.
+homepage-validate: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    base='kubernetes/apps/monitoring/homepage'
+    ks="$base/ks.yaml"
+    ns="$base/app/namespace.yaml"
+    dep="$base/app/deployment.yaml"
+    route="$base/app/httproute.yaml"
+
+    for f in "$ks" "$ns" "$dep" "$route" "$base/app/rbac.yaml" "$base/app/service.yaml" \
+      "$base/app/kustomization.yaml" "$base/app/config/settings.yaml" \
+      "$base/app/config/kubernetes.yaml" "$base/app/config/services.yaml" \
+      "$base/app/config/widgets.yaml" "$base/app/config/bookmarks.yaml"; do
+      [[ -f "$f" ]] || { echo "Missing Phase 10 Homepage source: $f" >&2; exit 1; }
+    done
+    rg -qx '  - ./homepage/ks.yaml' kubernetes/apps/monitoring/kustomization.yaml || {
+      echo 'Refusing: ./homepage/ks.yaml is not listed in the monitoring kustomization.' >&2
+      exit 1
+    }
+
+    suspend_state="$(yq -r '.spec.suspend // false' "$ks")"
+    [[ "$suspend_state" == 'true' || "$suspend_state" == 'false' ]]
+    [[ "$(yq -r '.metadata.labels."gateway.supermorphic.com/access"' "$ns")" == 'internal' ]]
+    [[ "$(yq ea -r '[.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'cilium,internal-gateway' ]]
+    [[ "$(yq -r '.spec.template.spec.containers[0].image' "$dep")" == 'ghcr.io/gethomepage/homepage:v1.13.2' ]]
+    [[ "$(yq -r '[.spec.template.spec.containers[0].env[] | select(.name == "HOMEPAGE_ALLOWED_HOSTS") | .value] | .[0]' "$dep")" == 'homepage.lab.supermorphic.com' ]]
+    [[ "$(yq -r '.spec.hostnames[0]' "$route")" == 'homepage.lab.supermorphic.com' ]]
+    [[ "$(yq -r '.spec.parentRefs[0].name' "$route")" == 'internal' ]]
+
+    kustomize build "$base/app" >/dev/null
+
+    echo 'Phase 10 Homepage source, wiring, namespace label, dependency graph, image, allowed-hosts, and HTTPRoute passed validation.'
+
+# Verify the live Homepage app: Kustomization Ready, deployment rolled out,
+# HTTPRoute accepted, dashboard reachable via HTTPS, and foundation green.
+homepage-verify: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    ns='homepage'
+    gateway_ip='192.168.90.30'
+
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization homepage --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || { echo 'Homepage Kustomization is not Ready.' >&2; exit 1; }
+    kubectl --kubeconfig "$kubeconfig" --namespace "$ns" rollout status deployment/homepage --timeout=5m
+
+    accepted=false
+    for _ in {1..18}; do
+      route="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get httproute homepage --output json 2>/dev/null)"
+      if [[ "$(yq -r '[.status.parents[].conditions[]? | select(.type == "Accepted") | .status] | unique | join(" ")' - <<<"$route")" == 'True' ]]; then accepted=true; break; fi
+      sleep 5
+    done
+    [[ "$accepted" == 'true' ]] || { echo 'Homepage HTTPRoute is not Accepted.' >&2; exit 1; }
+
+    dns_answer=''
+    for _ in {1..30}; do
+      dns_answer="$(dig +short @192.168.90.2 homepage.lab.supermorphic.com A | sort -u)"
+      [[ "$dns_answer" == "$gateway_ip" ]] && break
+      sleep 10
+    done
+    [[ "$dns_answer" == "$gateway_ip" ]] || { echo "Pi-hole returned '$dns_answer' for homepage, not $gateway_ip." >&2; exit 1; }
+    curl --silent --show-error --fail --max-time 15 --resolve "homepage.lab.supermorphic.com:443:$gateway_ip" https://homepage.lab.supermorphic.com/ >/dev/null
+
+    just kube foundation-verify
+    echo 'Phase 10 Homepage acceptance passed: Kustomization Ready, deployment rolled out, HTTPRoute accepted, and the dashboard reachable with trusted HTTPS at homepage.lab.supermorphic.com.'

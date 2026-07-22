@@ -1171,6 +1171,72 @@ gatus:
     bootstrap_complete=true
     echo 'Phase 10 Gatus live acceptance passed. Change the Gatus Git source to suspend=false, commit, push, and rerun just kube gatus-verify.'
 
+# Reconcile the suspended Phase 10 Homepage app after guarded checks, then verify.
+# On failure the resumed Kustomization is re-suspended, preserving its resources.
+homepage:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    owner='7yXwscXEzv6phzUnKfrw'
+    repository='homelab-talos'
+    expected_origin="https://github.com/${owner}/${repository}.git"
+    expected_confirmation='bootstrap:phase10:homepage'
+    ks='kubernetes/apps/monitoring/homepage/ks.yaml'
+    resumed=false
+    bootstrap_complete=false
+    cleanup_homepage() {
+      if [[ "$bootstrap_complete" != 'true' && "$resumed" == 'true' ]]; then
+        echo 'Phase 10 Homepage did not pass; suspending the attempted Kustomization while preserving its resources.' >&2
+        flux suspend kustomization homepage --namespace flux-system --kubeconfig "$kubeconfig" >/dev/null 2>&1 || true
+      fi
+    }
+    trap cleanup_homepage EXIT
+
+    [[ -f "$kubeconfig" ]] || { echo 'Missing ignored kubeconfig.' >&2; exit 1; }
+    [[ "$(git branch --show-current)" == 'main' ]]
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo 'Refusing Homepage bootstrap: commit and push the reviewed suspended source first.' >&2
+      exit 1
+    }
+    [[ "$(git remote get-url origin)" == "$expected_origin" ]]
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    [[ "$remote_head" == "$(git rev-parse HEAD)" ]] || {
+      echo 'Refusing Homepage bootstrap: local HEAD and origin/main differ.' >&2
+      exit 1
+    }
+    [[ "$(yq -r '.spec.suspend' "$ks")" == 'true' ]] || {
+      echo 'Refusing Homepage bootstrap: the Homepage Kustomization must be staged suspended in Git.' >&2
+      exit 1
+    }
+
+    just kube homepage-validate
+    just kube flux-verify
+    flux reconcile kustomization cluster-apps \
+      --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization homepage --output jsonpath='{.spec.suspend}')" == 'true' ]] || {
+      echo 'Refusing Homepage bootstrap: homepage is not suspended in the live cluster.' >&2
+      exit 1
+    }
+
+    [[ "${HOMEPAGE_BOOTSTRAP_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to reconcile the Phase 10 Homepage app.' >&2
+      echo "Set HOMEPAGE_BOOTSTRAP_CONFIRM='$expected_confirmation' after reviewing homepage-validate." >&2
+      exit 1
+    }
+
+    echo 'Reconciling Homepage Kustomization.'
+    resumed=true
+    flux resume kustomization homepage --namespace flux-system --kubeconfig "$kubeconfig"
+    flux reconcile kustomization homepage \
+      --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 15m
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait \
+      --for=condition=Ready kustomization/homepage --timeout=15m
+
+    just kube homepage-verify
+    bootstrap_complete=true
+    echo 'Phase 10 Homepage live acceptance passed. Change the Homepage Git source to suspend=false, commit, push, and rerun just kube homepage-verify.'
+
 # Guard, reboot one node, and require full recovery before returning. Refuses
 # unless the cluster is already healthy so a rolling reboot never removes a second
 # node while another is degraded. Reused for Phase 8 soak and day-two maintenance.

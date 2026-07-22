@@ -1,0 +1,21 @@
+---
+- Observability:
+    - Grafana:
+        href: https://grafana.lab.supermorphic.com
+        icon: grafana.svg
+        description: Dashboards and metrics
+    - Prometheus:
+        href: https://prometheus.lab.supermorphic.com
+        icon: prometheus.svg
+        description: Metrics and queries
+    - Alertmanager:
+        href: https://alertmanager.lab.supermorphic.com
+        icon: alertmanager.svg
+        description: Alerts and silences
+    - Gatus:
+        href: https://gatus.lab.supermorphic.com
+        icon: gatus.svg
+        description: Uptime
+        widget:
+          type: gatus
+          url: http://gatus.gatus.svc.cluster.local

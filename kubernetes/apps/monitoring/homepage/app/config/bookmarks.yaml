@@ -1,0 +1,14 @@
+---
+- Documentation:
+    - Talos:
+        - href: https://www.talos.dev/latest/
+          icon: si-talos
+    - Flux:
+        - href: https://fluxcd.io/flux/
+          icon: si-flux
+    - Longhorn:
+        - href: https://longhorn.io/docs/
+          icon: longhorn.svg
+    - Dashboard Icons:
+        - href: https://github.com/homarr-labs/dashboard-icons
+          icon: github-light.svg

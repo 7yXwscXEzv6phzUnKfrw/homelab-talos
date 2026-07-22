@@ -1,0 +1,24 @@
+---
+- greeting:
+    text_size: xl
+    text: Homelab
+- kubernetes:
+    cluster:
+      show: true
+      cpu: true
+      memory: true
+      showLabel: true
+      label: Cluster
+    nodes:
+      show: true
+      cpu: true
+      memory: true
+      showLabel: true
+- search:
+    provider: duckduckgo
+    target: _blank
+- datetime:
+    text_size: xl
+    format:
+      timeStyle: short
+      dateStyle: short
