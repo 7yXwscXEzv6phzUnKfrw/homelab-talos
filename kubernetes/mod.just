@@ -1143,8 +1143,19 @@ monitoring-verify: require-bash
     [[ "$(yq -r '[.items[].status.phase] | unique | join(" ")' - <<<"$pvc_json")" == 'Bound' ]] || { echo 'Not all monitoring PVCs are Bound.' >&2; exit 1; }
 
     for r in grafana prometheus alertmanager; do
-      route="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get httproute "$r" --output json 2>/dev/null)"
-      [[ "$(yq -r '[.status.parents[].conditions[] | select(.type == "Accepted") | .status] | unique | join(" ")' - <<<"$route")" == 'True' ]] || { echo "HTTPRoute $r is not Accepted." >&2; exit 1; }
+      accepted=false
+      for _ in {1..18}; do
+        route="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get httproute "$r" --output json 2>/dev/null)"
+        if [[ "$(yq -r '[.status.parents[].conditions[]? | select(.type == "Accepted") | .status] | unique | join(" ")' - <<<"$route")" == 'True' ]]; then
+          accepted=true
+          break
+        fi
+        sleep 5
+      done
+      [[ "$accepted" == 'true' ]] || {
+        echo "HTTPRoute $r is not Accepted; confirm the monitoring namespace carries gateway.supermorphic.com/access=internal and that Envoy Gateway has re-listed it." >&2
+        exit 1
+      }
     done
 
     dns_answer=''
