@@ -942,6 +942,14 @@ the old SSDs be wiped or reused.
 
 ## Phase 9: Storage
 
+> **Scope (revised 2026-07-22): Phase 9 ships Longhorn only.** Steps 7–10 (NFS CSI
+> and the bulk media `/data` filesystem) are **deferred to Phase 11**. The UNAS Pro
+> has NFS disabled and serves SMB/CIFS shares; the media consumer (Plex) runs
+> off-cluster on the Mac Mini; and the in-cluster media/download apps that need
+> `/data` do not exist until Phase 11. When built in Phase 11, use `csi-driver-smb`
+> against `//192.168.0.3/Prometheus` rather than NFS (SMB preserves the hardlink
+> requirement within a share). Steps 1–6 (Longhorn) are the Phase 9 deliverable.
+
 1. Cap the Longhorn user volume before installing Longhorn. Revise
    `talos/talconfig.yaml` so the `longhorn` user volume uses a fixed
    `maxSize: 500GiB` and drops `grow: true`; remove the `700GiB` `minSize` (or set
@@ -966,40 +974,37 @@ the old SSDs be wiped or reused.
 4. Use two replicas and enforce node-level replica anti-affinity.
 5. Configure the UNAS CIFS backup target and SOPS-encrypted credentials.
 6. Add recurring snapshots and backups, then prove restoration into a new PVC.
-7. Install the NFS CSI driver for UNAS Pro bulk storage. Talos mounts standard
-   NFSv4 through its in-kernel client, so no additional system extension is
-   required for NFS.
-8. Expose downloads and media as a single hardlink-safe filesystem, not two
-   separate StorageClasses or exports. Sonarr and Radarr only perform instant,
-   zero-extra-space imports (hardlinks and atomic moves) when the download and
-   media paths share one filesystem; separate mounts appear as different
-   filesystems and silently force an I/O-intensive copy-then-delete that also
-   doubles space during the copy.
-   - Back the data with one UNAS NFS export (for example `unas:/volume1/data`)
-     that contains `downloads/` and `media/` as sibling subfolders.
-   - Mount that one export once into each media application at `/data`, and
-     address the two trees as `/data/downloads` and `/data/media`. Do not split
-     it into per-purpose PVCs or `subPath` mounts, because those present as
-     distinct filesystems inside the container and defeat hardlinking.
-   - Mount with `nfsvers=4.1` and `hard` so imports are atomic and stalled I/O
-     retries instead of failing.
-9. Decide where Plex writes transcode temp data before Phase 11. Hardware
-   transcode scratch must not live on NFS; use node-local fast storage (the NVMe
-   headroom reclaimed in step 1) or an `emptyDir`/`tmpfs` volume sized for the
-   expected concurrent transcode segments. This is the one legitimate media-path
-   use of the NVMe; the bulk download buffer belongs on the UNAS, not the NVMe.
-10. Test one PVC on Longhorn and one on the NFS `/data` class, and prove that a
-    file moved between `/data/downloads` and `/data/media` becomes a hardlink
-    before adding applications.
+**Steps 7–10 below are DEFERRED to Phase 11** (see the scope note above). They are
+retained as design intent for the media bulk store, with the corrections that the
+transport is **SMB/CIFS against `//192.168.0.3/Prometheus`** (not an NFS export)
+and the single-hardlink-safe-filesystem requirement is satisfied by one static RWX
+SMB PV. The `nfsvers`/export specifics do not apply.
 
-### Exit Gate
+7. _(Phase 11)_ Install the SMB CSI driver (`csi-driver-smb`) for UNAS Pro bulk
+   storage. No Talos extension is required.
+8. _(Phase 11)_ Expose media (and future downloads) as a single hardlink-safe
+   filesystem, not two separate StorageClasses. Sonarr and Radarr only perform
+   instant, zero-extra-space imports when the download and media paths share one
+   filesystem; separate mounts appear as different filesystems and force an
+   I/O-intensive copy-then-delete.
+   - Back it with one static RWX PV bound to `//192.168.0.3/Prometheus`, mounted
+     once into each media application at `/data` and addressed as `/data/media`
+     (`movies`/`tv`) plus a `/data/downloads` sibling on the same share.
+9. _(Phase 11)_ Decide where Plex writes transcode temp data. Transcode scratch
+   must not live on the NAS; use node-local fast storage (the NVMe headroom
+   reclaimed in step 1) or an `emptyDir`/`tmpfs`.
+10. _(Phase 11)_ Test one PVC on Longhorn and one on the SMB `/data` share, and
+    prove that a file moved between `/data/downloads` and `/data/media` becomes a
+    hardlink before adding applications.
+
+### Exit Gate (Phase 9 — Longhorn)
 
 - Longhorn nodes, disks, engines, and replicas are healthy.
 - A replica rebuild succeeds after a single-node reboot.
 - A Longhorn backup can be restored.
-- The NFS `/data` class supports the expected read/write behavior.
-- A file moved between `/data/downloads` and `/data/media` uses a hardlink and
-  consumes no additional space.
+- _(Deferred to Phase 11)_ The SMB `/data` share supports the expected read/write
+  behavior, and a file moved between `/data/downloads` and `/data/media` uses a
+  hardlink and consumes no additional space.
 
 ## Phase 10: Greenfield Platform Applications
 

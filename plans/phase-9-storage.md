@@ -1,4 +1,14 @@
-# Phase 9: Storage (Longhorn block + UNAS NFS bulk) — Implementation Plan
+# Phase 9: Storage (Longhorn block; media storage deferred to Phase 11) — Implementation Plan
+
+> **Scope change (2026-07-22):** Phase 9 ships **Longhorn only**. The NFS `/data`
+> media layer (Part C below) is **deferred to Phase 11** and will be redesigned
+> for **SMB/CIFS**, not NFS. Reasons: the UNAS Pro has **NFS disabled** (it serves
+> UniFi Drive shares over SMB/CIFS), the media consumer (**Plex runs on the Mac
+> Mini**, not the cluster), and the only in-cluster consumers (Sonarr/Radarr/etc.)
+> are Phase 11. Nothing in Phase 9/10 depends on `/data` — Phase 10 greenfield apps
+> use Longhorn block storage. See `reference-nas-unas-pro` memory. Parts A, B, D,
+> E below describe the Longhorn work that shipped; Part C is retained as historical
+> context for the Phase 11 redesign.
 
 ## Context
 
@@ -37,11 +47,14 @@ the soak. Per the plan, the old SSDs also stay untouched until Phase 8 closes.
 | NFS server | `192.168.0.3` (UNAS Pro) | user |
 | NFS `/data` | **single static export** with `downloads/`+`media/` siblings; `nfsvers=4.1,hard`; one PV/PVC = whole export (hardlink-safe) | plan steps 8–10 |
 
-### Open item to confirm at build time
-The exact **UNAS NFS export path** for the `data` share (plan example
-`/volume1/data`). The legacy NAS reference is CIFS-only (share `Longhorn`); the
-NFS `data` export must be created/confirmed on the UNAS and its path pinned in the
-static PV. Everything else is fixed.
+### Open item — RESOLVED (2026-07-22): deferred to Phase 11 as SMB
+The "exact UNAS NFS export path" is moot: the UNAS Pro has **NFS disabled** and
+serves shares over **SMB/CIFS** (UniFi Drive). The media bulk share is
+`//192.168.0.3/Prometheus` (folders `media/movies`, `media/tv`); Plex consumes it
+off-cluster from the Mac Mini. The in-cluster media `/data` layer is deferred to
+**Phase 11** and will use **`csi-driver-smb`** against that share (SMB supports
+hardlinks within a share, preserving the Sonarr/Radarr hardlink requirement). The
+Longhorn CIFS backup target (`cifs://192.168.0.3/Longhorn`) is unaffected.
 
 ## Part A — Talos machine-config changes (do first, before installing Longhorn)
 
@@ -132,10 +145,18 @@ in `longhorn-system` with `CIFS_USERNAME`/`CIFS_PASSWORD` in `stringData`,
 **re-encrypted under the new repo age key** (`age1da2c…`, per `.sops.yaml`) — do
 not copy the legacy ciphertext. Authored via the guarded secret recipe below.
 
-## Part C — NFS CSI + single `/data` volume (`kubernetes/apps/storage/csi-driver-nfs/`)
+## Part C — media bulk `/data` — DEFERRED TO PHASE 11 (redesign as SMB)
 
-- Install **`csi-driver-nfs`** (kubernetes-csi/csi-driver-nfs Helm chart, latest
-  stable). No Talos extension needed — Talos mounts NFSv4 via its in-kernel client.
+> **Not built in Phase 9.** The NFS design below is superseded: the UNAS serves
+> SMB/CIFS, not NFS, and there is no in-cluster media consumer until Phase 11. In
+> Phase 11, build **`csi-driver-smb`** against `//192.168.0.3/Prometheus`
+> (credentials via the same guarded SOPS pattern as `nas-credentials`), exposing a
+> single static RWX PV so `media/movies` + `media/tv` (and future `downloads/`)
+> share one filesystem for hardlink-safe imports. The NFS notes below are kept
+> only as a starting point for that Phase 11 work.
+
+- ~~Install **`csi-driver-nfs`** (kubernetes-csi/csi-driver-nfs Helm chart, latest
+  stable). No Talos extension needed — Talos mounts NFSv4 via its in-kernel client.~~
 - Expose the bulk export as **one static PV** (not dynamic subdir provisioning,
   which would fragment the filesystem and defeat hardlinks):
   - `PersistentVolume` with `csi.driver: nfs.csi.k8s.io`,
