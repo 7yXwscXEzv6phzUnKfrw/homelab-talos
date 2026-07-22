@@ -911,11 +911,12 @@ storage-validate: require-bash
     hr="$base/app/helmrelease.yaml"
     repo="$base/app/helmrepository.yaml"
     jobs="$base/config/recurring-jobs.yaml"
+    backuptarget="$base/config/backup-target.yaml"
     expected_recipient="$(yq -r '.creation_rules[] | select(.path_regex | test("kubernetes")) | .age' .sops.yaml)"
     temp_dir="$(mktemp -d /tmp/homelab-talos-storage-validate.XXXXXX)"
     trap 'rm -rf -- "$temp_dir"' EXIT
 
-    for f in "$ks" "$secret" "$values" "$hr" "$repo" "$jobs" \
+    for f in "$ks" "$secret" "$values" "$hr" "$repo" "$jobs" "$backuptarget" \
       "$base/app/namespace.yaml" "$base/app/kustomization.yaml" \
       "$base/config/kustomization.yaml" kubernetes/apps/storage/kustomization.yaml; do
       [[ -f "$f" ]] || {
@@ -949,9 +950,11 @@ storage-validate: require-bash
     [[ "$(yq -r '.spec.url' "$repo")" == 'https://charts.longhorn.io' ]]
     [[ "$(yq -r '.defaultSettings.defaultDataPath' "$values")" == '/var/mnt/longhorn' ]]
     [[ "$(yq -r '.defaultSettings.replicaSoftAntiAffinity' "$values")" == 'false' ]]
-    [[ "$(yq -r '.defaultSettings.backupTarget' "$values")" == 'cifs://192.168.0.3/Longhorn' ]]
-    [[ "$(yq -r '.defaultSettings.backupTargetCredentialSecret' "$values")" == 'nas-credentials' ]]
     [[ "$(yq -r '.persistence.defaultClassReplicaCount' "$values")" == '2' ]]
+    [[ "$(yq -r '.kind' "$backuptarget")" == 'BackupTarget' ]]
+    [[ "$(yq -r '.metadata.name' "$backuptarget")" == 'default' ]]
+    [[ "$(yq -r '.spec.backupTargetURL' "$backuptarget")" == 'cifs://192.168.0.3/Longhorn' ]]
+    [[ "$(yq -r '.spec.credentialSecret' "$backuptarget")" == 'nas-credentials' ]]
     [[ "$(yq ea -r '[select(.kind == "RecurringJob") | .spec.task] | .[]' "$jobs" | sort | tr '\n' ' ')" == 'backup snapshot ' ]]
 
     kustomize build "$base/app" >/dev/null
@@ -1000,8 +1003,19 @@ storage-verify: require-bash
     [[ "$(yq -r '.metadata.annotations."storageclass.kubernetes.io/is-default-class"' - <<<"$sc")" == 'true' ]] || { echo 'longhorn is not the default StorageClass.' >&2; exit 1; }
     [[ "$(yq -r '.parameters.numberOfReplicas' - <<<"$sc")" == '2' ]] || { echo 'longhorn StorageClass is not 2 replicas.' >&2; exit 1; }
 
-    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get backuptargets.longhorn.io default --output jsonpath='{.status.available}' 2>/dev/null)" == 'true' ]] || {
-      echo 'Longhorn backup target is not available (check the CIFS share and nas-credentials).' >&2
+    # The CIFS mount + first poll are eventually consistent, so retry (~4 min).
+    bt_available=false
+    for _ in {1..24}; do
+      if [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get backuptargets.longhorn.io default --output jsonpath='{.status.available}' 2>/dev/null)" == 'true' ]]; then
+        bt_available=true
+        break
+      fi
+      sleep 10
+    done
+    [[ "$bt_available" == 'true' ]] || {
+      bt_msg="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get backuptargets.longhorn.io default --output jsonpath='{.status.conditions[?(@.type=="Unavailable")].message}' 2>/dev/null)"
+      echo "Longhorn backup target is not available after retries: ${bt_msg:-unknown}." >&2
+      echo 'Check the CIFS share, the nas-credentials Secret, and whether the Talos nodes can mount CIFS (cifs kernel module).' >&2
       exit 1
     }
     for j in daily-snapshot daily-backup; do

@@ -1,0 +1,13 @@
+---
+# Longhorn 1.7+ manages the backup target as a CR, not a setting. Longhorn
+# auto-creates the "default" BackupTarget with an empty URL; this declares it.
+# Applied in config/ (dependsOn longhorn), so nas-credentials exists alongside it.
+apiVersion: longhorn.io/v1beta2
+kind: BackupTarget
+metadata:
+  name: default
+  namespace: longhorn-system
+spec:
+  backupTargetURL: cifs://192.168.0.3/Longhorn
+  credentialSecret: nas-credentials
+  pollInterval: 1m0s

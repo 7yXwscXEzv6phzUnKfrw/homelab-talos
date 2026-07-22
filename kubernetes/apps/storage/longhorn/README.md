@@ -10,11 +10,14 @@ tolerating one node loss.
 then `longhorn-config` (`dependsOn: longhorn`) for the CIFS backup credential and
 the recurring snapshot/backup jobs.
 
-Backups go to `cifs://192.168.0.3/Longhorn` using the `nas-credentials` Secret
-(`CIFS_USERNAME`/`CIFS_PASSWORD`). That Secret is SOPS-encrypted and created only
-by the guarded `just repo storage-secrets` workflow — never hand-edited or copied
-from the legacy repository. `config/recurring-jobs.yaml` runs a daily snapshot
-(retain 7) and a daily backup (retain 7) against the built-in `default` group.
+Backups go to `cifs://192.168.0.3/Longhorn`. Longhorn 1.7+ removed the
+`backup-target` settings, so the target is declared as the `default`
+**`BackupTarget`** CR (`config/backup-target.yaml`) referencing the
+`nas-credentials` Secret (`CIFS_USERNAME`/`CIFS_PASSWORD`). That Secret is
+SOPS-encrypted and created only by the guarded `just repo storage-secrets`
+workflow — never hand-edited or copied from the legacy repository.
+`config/recurring-jobs.yaml` runs a daily snapshot (retain 7) and a daily backup
+(retain 7) against the built-in `default` group.
 
 Talos prerequisites (Phase 9 Part A): the `siderolabs/iscsi-tools` and
 `siderolabs/util-linux-tools` extensions, the `/var/mnt/longhorn` user volume, and

@@ -9,8 +9,8 @@ defaultSettings:
   # Hard node-level anti-affinity: a volume's replicas must land on different
   # nodes (two replicas across three nodes tolerates one node loss).
   replicaSoftAntiAffinity: false
-  backupTarget: cifs://192.168.0.3/Longhorn
-  backupTargetCredentialSecret: nas-credentials
+  # Longhorn 1.7+ removed the backup-target / backup-target-credential-secret
+  # settings; the backup target is now a BackupTarget CR (config/backup-target.yaml).
   snapshotDataIntegrity: enabled
   backupCompressionMethod: gzip
 metrics:
