@@ -1,10 +1,4 @@
 ---
-title: Homelab Dashboard
+title: "Homelab Dashboard"
 theme: dark
-color: slate
 iconStyle: theme
-headerStyle: clean
-layout:
-  Monitoring:
-    style: row
-    columns: 4
