@@ -6,4 +6,5 @@ resources:
   - ./kube-system
   - ./networking
   - ./security
+  - ./storage
   - ./testing

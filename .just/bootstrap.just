@@ -927,6 +927,95 @@ foundation:
     bootstrap_complete=true
     echo 'Phase 7 live acceptance passed. Change all Phase 7 Git sources to suspend=false, commit, push, and rerun just kube foundation-verify.'
 
+# Reconcile the suspended Phase 9 storage foundation (Longhorn) after guarded
+# checks, in dependency order, then verify. Flux decrypts the CIFS Secret
+# in-cluster, so this needs no operator SOPS key. On failure the resumed
+# Kustomizations are re-suspended while their resources are preserved.
+storage:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    owner='7yXwscXEzv6phzUnKfrw'
+    repository='homelab-talos'
+    expected_origin="https://github.com/${owner}/${repository}.git"
+    expected_confirmation='bootstrap:phase9:storage:longhorn'
+    names=(longhorn longhorn-config)
+    ks='kubernetes/apps/storage/longhorn/ks.yaml'
+    resumed=()
+    bootstrap_complete=false
+    cleanup_storage() {
+      if [[ "$bootstrap_complete" != 'true' && "${#resumed[@]}" -gt 0 ]]; then
+        echo 'Phase 9 storage did not pass; suspending attempted Kustomizations while preserving their resources.' >&2
+        for name in "${resumed[@]}"; do
+          flux suspend kustomization "$name" \
+            --namespace flux-system \
+            --kubeconfig "$kubeconfig" >/dev/null 2>&1 || true
+        done
+      fi
+    }
+    trap cleanup_storage EXIT
+
+    [[ -f "$kubeconfig" ]] || {
+      echo 'Missing ignored kubeconfig.' >&2
+      exit 1
+    }
+    [[ "$(git branch --show-current)" == 'main' ]]
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo 'Refusing storage bootstrap: commit and push the reviewed suspended sources first.' >&2
+      exit 1
+    }
+    [[ "$(git remote get-url origin)" == "$expected_origin" ]]
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    [[ "$remote_head" == "$(git rev-parse HEAD)" ]] || {
+      echo 'Refusing storage bootstrap: local HEAD and origin/main differ.' >&2
+      exit 1
+    }
+    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .spec.suspend] | .[]' "$ks" | sort -u)" == 'true' ]] || {
+      echo 'Refusing storage bootstrap: both storage Kustomizations must be staged suspended in Git.' >&2
+      exit 1
+    }
+
+    just kube storage-validate
+    just kube flux-verify
+    flux reconcile kustomization cluster-apps \
+      --namespace flux-system \
+      --with-source \
+      --kubeconfig "$kubeconfig" \
+      --timeout 10m
+    for name in "${names[@]}"; do
+      live_suspend="$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization "$name" --output jsonpath='{.spec.suspend}')"
+      [[ "$live_suspend" == 'true' ]] || {
+        echo "Refusing storage bootstrap: $name is not suspended in the live cluster." >&2
+        exit 1
+      }
+    done
+
+    [[ "${STORAGE_BOOTSTRAP_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to reconcile the Phase 9 storage foundation.' >&2
+      echo "Set STORAGE_BOOTSTRAP_CONFIRM='$expected_confirmation' after reviewing storage-validate." >&2
+      exit 1
+    }
+
+    for name in "${names[@]}"; do
+      echo "Reconciling storage Kustomization $name."
+      resumed+=("$name")
+      flux resume kustomization "$name" \
+        --namespace flux-system \
+        --kubeconfig "$kubeconfig"
+      flux reconcile kustomization "$name" \
+        --namespace flux-system \
+        --with-source \
+        --kubeconfig "$kubeconfig" \
+        --timeout 20m
+      kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait \
+        --for=condition=Ready "kustomization/$name" --timeout=20m
+    done
+
+    just kube storage-verify
+    bootstrap_complete=true
+    echo 'Phase 9 storage live acceptance passed. Change both storage Git sources to suspend=false, commit, push, and rerun just kube storage-verify.'
+
 # Guard, reboot one node, and require full recovery before returning. Refuses
 # unless the cluster is already healthy so a rolling reboot never removes a second
 # node while another is degraded. Reused for Phase 8 soak and day-two maintenance.
