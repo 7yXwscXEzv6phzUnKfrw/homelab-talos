@@ -22,6 +22,7 @@ mod kube "kubernetes"
 # bootstrap, pihole-status) are intentionally excluded and remain operator-only.
 [group("CI")]
 ci:
+    just repo lint
     just repo verify
     just kube cilium-validate
     just kube flux-validate
