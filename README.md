@@ -160,6 +160,47 @@ stored in `.mise.toml`; recipes fail fast when they are absent.
 Future-phase cluster mutations are added only with their validation, guard, and
 documentation boundary. Do not replace a missing workflow with an ad hoc apply.
 
+## Operational notes
+
+### ReadWriteOnce volumes require the `Recreate` deployment strategy
+
+**Symptom:** an app update hangs — the new pod sits in `ContainerCreating` with a
+`Multi-Attach error for volume`, the Helm upgrade times out, its retries exhaust,
+and the HelmRelease wedges in a failed state (often auto-rolling-back).
+
+**Cause:** a `Deployment` that mounts a `ReadWriteOnce` PVC (the default Longhorn
+access mode) with the default `RollingUpdate` strategy. RollingUpdate starts the
+new pod *before* deleting the old one, but a RWO volume can only attach to one
+node at a time, so the new pod can never mount it. This bites on **every** update
+to such a workload, not the first install. Hand-deleting pods mid-upgrade makes it
+worse — the volume churn can leave the app unable to open its on-disk state.
+
+**Fix (choose per workload):**
+- *Stateless-tolerant* (dashboards, status pages): use ephemeral storage and no
+  PVC. Gatus uses `storage.type: memory` — uptime history resets on restart,
+  which is fine and removes the failure mode entirely.
+- *Durable single-writer state:* set the Deployment to `Recreate` (Grafana:
+  `grafana.deploymentStrategy.type: Recreate`) so the old pod is deleted before
+  the new one starts, or use a StatefulSet (Prometheus/Alertmanager already do).
+  `just kube monitoring-validate` asserts Grafana uses `Recreate`.
+
+**Recovering a wedged HelmRelease:** `flux suspend` then `flux resume` the
+HelmRelease to reset its retry counter; if the workload is still stuck, delete its
+Deployment/PVC (Flux re-applies from Git) or delete the HelmRelease so its
+Kustomization reinstalls it fresh. Reconcile changes through Git — never
+hand-delete pods mid-rollout.
+
+### Verifying right after a push
+
+`*-verify` recipes call `foundation-verify`/`flux-verify`, which require the live
+Flux artifact to equal `origin/main`. Immediately after `git push`, Flux has not
+pulled yet and the just-changed Kustomizations briefly flip to not-Ready, so a
+verify can fail transiently. Force the pull and wait first:
+`flux reconcile source git flux-system` then
+`kubectl -n flux-system wait --for=condition=Ready kustomization/<name>`. Running
+verify as the tail of `just bootstrap <app>` avoids this (it reconciles
+`--with-source` before verifying).
+
 The Phase 3 apply procedure, including its exact serial-bound confirmation, is
 documented in [`talos/README.md`](talos/README.md) and the installation evidence
 is recorded in [`docs/phase-3-installation.md`](docs/phase-3-installation.md).
