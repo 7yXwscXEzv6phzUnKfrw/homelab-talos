@@ -3,10 +3,10 @@
 ## Status
 
 - Failure tests: complete (2026-07-21)
-- Soak window: started 2026-07-21 07:22 MDT; gate opens ~2026-07-22 07:22 MDT
-- State: **soaking** — active recovery tests passed; the 24-hour observation window
-  and its final re-verification are pending. Do not wipe or reuse the old SSDs
-  until this gate closes.
+- Soak window: 2026-07-21 07:22 → 2026-07-22 07:49 MDT (~24h27m) — **passed**
+- State: **complete** — all failure tests and the 24-hour soak passed with no
+  regressions. The old SSDs are now clear to wipe or reuse; this closes the
+  Phases 0–8 foundation milestone.
 
 The cluster runs entirely on the three NUCs (Talos, Kubernetes, Cilium, Flux,
 MetalLB, cert-manager, ExternalDNS, echo). The operator workstation only runs
@@ -132,4 +132,15 @@ mise exec -- talosctl --talosconfig clusterconfig/talosconfig \
 
 ## Soak Outcome
 
-_To be recorded after the 24-hour window closes (re-run the re-verification above)._
+**Passed — 2026-07-22 07:49 MDT (~24h27m window).** Re-verification at the gate:
+
+- `just kube foundation-verify` → exit 0; certificates, MetalLB, Envoy Gateway,
+  Pi-hole DNS, trusted HTTPS, echo, Cilium, Talos, and etcd all healthy.
+- Container restarts: 7 total — unchanged from the t0 baseline (nuc1
+  `kube-controller-manager` 3 + `kube-scheduler` 4 reboot artifacts); no new crash
+  loops over the full window.
+- Unhealthy pods: 0. etcd: three members, no alarms. No certificate renewal was
+  due in-window; no Pi-hole record churn.
+
+Phase 8 and the Phases 0–8 foundation milestone are complete. The old SSDs are
+now clear to wipe or reuse.

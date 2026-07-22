@@ -908,10 +908,11 @@ config and applied with the new guarded `just talos apply-live` day-two workflow
 
 Implementation evidence, the soak baseline, recovery commands, and the
 support-bundle procedure are recorded in
-[`docs/phase-8-soak.md`](../docs/phase-8-soak.md). The failure tests passed on
-2026-07-21 (rolling reboot with TPM auto-unlock and MetalLB failover, Flux
-controller restart, and an echo remove/recreate through Git); the 24-hour soak
-window and its final re-verification are pending.
+[`docs/phase-8-soak.md`](../docs/phase-8-soak.md). Phase 8 is complete: the
+failure tests passed on 2026-07-21 (rolling reboot with TPM auto-unlock and
+MetalLB failover, Flux controller restart, and an echo remove/recreate through
+Git) and the 24-hour soak passed on 2026-07-22 with no regressions. This closes
+the Phases 0–8 foundation milestone; the old SSDs are now clear to wipe or reuse.
 
 ### Failure Tests
 
