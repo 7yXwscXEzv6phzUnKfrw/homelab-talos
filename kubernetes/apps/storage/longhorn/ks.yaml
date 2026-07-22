@@ -33,6 +33,7 @@ metadata:
 spec:
   dependsOn:
     - name: longhorn
+    - name: internal-gateway
   decryption:
     provider: sops
     secretRef:

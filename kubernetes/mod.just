@@ -944,7 +944,7 @@ storage-validate: require-bash
     }
 
     [[ "$(yq ea -r 'select(.metadata.name == "longhorn") | .spec.dependsOn[].name' "$ks")" == 'cilium' ]]
-    [[ "$(yq ea -r 'select(.metadata.name == "longhorn-config") | .spec.dependsOn[].name' "$ks")" == 'longhorn' ]]
+    [[ "$(yq ea -r 'select(.metadata.name == "longhorn-config") | [.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'internal-gateway,longhorn' ]]
 
     [[ "$(yq -r '.spec.chart.spec.version' "$hr")" == '1.12.0' ]]
     [[ "$(yq -r '.spec.url' "$repo")" == 'https://charts.longhorn.io' ]]

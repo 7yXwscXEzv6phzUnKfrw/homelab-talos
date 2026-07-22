@@ -7,3 +7,5 @@ metadata:
     pod-security.kubernetes.io/audit: privileged
     pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/warn: privileged
+    # Allows the Longhorn UI HTTPRoute to attach to the internal gateway.
+    gateway.supermorphic.com/access: internal

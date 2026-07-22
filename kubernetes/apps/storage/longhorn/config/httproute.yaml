@@ -1,0 +1,38 @@
+---
+# Exposes the Longhorn UI on the internal gateway. NOTE: Longhorn's UI has no
+# built-in authentication, so it is reachable to anyone on the LAN behind the
+# internal gateway.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: longhorn
+  namespace: longhorn-system
+  annotations:
+    external-dns.k8s.io/audience: internal
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Longhorn"
+    gethomepage.dev/description: "Distributed block storage system"
+    gethomepage.dev/group: "Infrastructure"
+    gethomepage.dev/icon: "longhorn.svg"
+    gethomepage.dev/href: "https://longhorn.lab.supermorphic.com"
+    gethomepage.dev/pod-selector: "app=longhorn-manager"
+spec:
+  hostnames:
+    - longhorn.lab.supermorphic.com
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: internal
+      namespace: networking
+      sectionName: https
+  rules:
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: longhorn-frontend
+          port: 80
+          weight: 1
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
