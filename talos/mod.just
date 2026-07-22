@@ -256,3 +256,70 @@ apply-live node: validate
       --talosconfig "$talosconfig" \
       --file "$config" \
       --mode=no-reboot
+
+# Wipe the released longhorn user-volume partition so Talos reprovisions it at the
+# configured size. Talos never shrinks a volume in place, so a size decrease needs
+# the partition destroyed and recreated. The volume must FIRST be released (remove
+# the longhorn userVolume from talconfig, generate, apply-live) so wipe disk will
+# accept it. Destructive: only run while /var/mnt/longhorn is empty (pre-Longhorn
+# or after a full replica evacuation). Wipes only the named partition; STATE and
+# EPHEMERAL are untouched.
+wipe-longhorn node:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    node='{{node}}'
+    case "$node" in
+      nuc1) node_ip='192.168.90.10' ;;
+      nuc2) node_ip='192.168.90.11' ;;
+      nuc3) node_ip='192.168.90.12' ;;
+      *)
+        echo 'Node must be one of: nuc1, nuc2, nuc3.' >&2
+        exit 1
+        ;;
+    esac
+
+    talosconfig='../clusterconfig/talosconfig'
+    partition='nvme0n1p5'
+    expected_confirmation="wipe-longhorn:${node}:${node_ip}"
+
+    [[ -f "$talosconfig" ]] || {
+      echo 'Missing ../clusterconfig/talosconfig; run just talos generate.' >&2
+      exit 1
+    }
+
+    talosctl version --nodes "$node_ip" --endpoints "$node_ip" --talosconfig "$talosconfig" >/dev/null
+
+    # Refuse unless the longhorn volume has already been released from the machine
+    # config (no active u-longhorn VolumeStatus). This forces the operator to remove
+    # the userVolume + apply-live first; wipe disk would otherwise refuse anyway.
+    active_phase="$(talosctl get volumestatus u-longhorn \
+      --nodes "$node_ip" --endpoints "$node_ip" --talosconfig "$talosconfig" \
+      --output jsonpath='{.spec.phase}' 2>/dev/null || true)"
+    [[ -z "$active_phase" ]] || {
+      echo "Refusing wipe: $node still has an active u-longhorn volume (phase=$active_phase)." >&2
+      echo 'Remove the longhorn userVolume from talos/talconfig.yaml, then run' >&2
+      echo "just talos generate and just talos apply-live $node so the partition is released first." >&2
+      exit 1
+    }
+
+    # Confirm the expected system disk so we never wipe the wrong device.
+    disk_state="$(talosctl get disks --nodes "$node_ip" --endpoints "$node_ip" --talosconfig "$talosconfig" --output yaml)"
+    [[ "$(yq ea -r 'select(.spec.dev_path == "/dev/nvme0n1") | .spec.model' - <<<"$disk_state")" == 'Samsung SSD 990 PRO 1TB' ]] || {
+      echo "Refusing wipe: unexpected system disk on $node." >&2
+      exit 1
+    }
+
+    [[ "${TALOS_WIPE_LONGHORN_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo "Refusing to wipe $partition on $node." >&2
+      echo "Set TALOS_WIPE_LONGHORN_CONFIRM='$expected_confirmation' and rerun after confirming the volume is released and empty." >&2
+      exit 1
+    }
+
+    echo "Wiping $partition on $node ($node_ip) and dropping the partition."
+    talosctl wipe disk "$partition" \
+      --drop-partition \
+      --nodes "$node_ip" \
+      --endpoints "$node_ip" \
+      --talosconfig "$talosconfig"
+    echo "Wiped $partition on $node. Re-add the longhorn userVolume (maxSize 500GiB) to talconfig, then just talos generate and just talos apply-live $node to reprovision it at the new size."
