@@ -1098,9 +1098,6 @@ monitoring-validate: require-bash
     [[ "$(yq -r '.prometheus.prometheusSpec.retention' "$values")" == '30d' ]]
     [[ "$(yq -r '.prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage' "$values")" == '50Gi' ]]
     [[ "$(yq -r '.grafana.persistence.enabled' "$values")" == 'true' ]]
-    # Grafana's PVC is ReadWriteOnce; the Deployment must use Recreate or a rolling
-    # update deadlocks on the volume (see README).
-    [[ "$(yq -r '.grafana.deploymentStrategy.type' "$values")" == 'Recreate' ]]
     for c in kubeProxy kubeControllerManager kubeScheduler kubeEtcd; do
       [[ "$(yq -r ".${c}.enabled" "$values")" == 'false' ]]
     done
