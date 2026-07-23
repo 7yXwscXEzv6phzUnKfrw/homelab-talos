@@ -80,6 +80,11 @@ documented localhost-only bypass). First-run setting (or pre-seeded `qBittorrent
 — generated from the ProtonVPN dashboard with NAT-PMP/port-forwarding enabled) + a
 recipe-generated control-server **apikey** baked into the mounted `config.toml`.
 
+See [`protonvpn-gluetun.md`](protonvpn-gluetun.md) for the full assembly (why only the
+key is used, the "don't mount `wg0.conf`" caveat, the credential-generation options),
+the **annual manual credential-renewal runbook**, and the VPN-expiry monitoring options
+(a reactive critical VPN-down alert in Phase 14 + an external yearly reminder).
+
 ## Kill-switch acceptance gate — BLOCKING (`qbittorrent-killswitch-verify`, operator-run)
 
 Not in `just ci`; Phase 12 is not flipped `suspend: false` / not "done" until it passes
