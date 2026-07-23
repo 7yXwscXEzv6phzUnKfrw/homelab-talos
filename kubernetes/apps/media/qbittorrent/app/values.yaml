@@ -22,9 +22,13 @@ controllers:
         env:
           VPN_SERVICE_PROVIDER: protonvpn
           VPN_TYPE: wireguard
-          # Auto-selects a port-forwarding-capable P2P server; no server pin needed.
+          # Pin server selection to Sweden's port-forwarding-capable P2P servers.
+          # The WireGuard key is account-scoped (works on any Proton server), so the
+          # pin lives here as non-secret config, not in the .conf/secret; Gluetun
+          # reselects within Sweden if a server is retired.
           VPN_PORT_FORWARDING: "on"
           PORT_FORWARD_ONLY: "on"
+          SERVER_COUNTRIES: Sweden
           # Allow the WebUI in via the Pod interface (Service/Envoy/*arr/probes).
           FIREWALL_INPUT_PORTS: "8080"
           # FIREWALL_OUTBOUND_SUBNETS left unset on purpose — Cilium DNATs Service->Pod

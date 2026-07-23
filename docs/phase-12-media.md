@@ -43,8 +43,11 @@ test (including a hard Gluetun-container kill) is mandatory, not assumed.
 ## Gluetun configuration (review-corrected)
 
 - `VPN_SERVICE_PROVIDER=protonvpn`, `VPN_TYPE=wireguard`, `WIREGUARD_PRIVATE_KEY` (SOPS),
-  `VPN_PORT_FORWARDING=on`, `PORT_FORWARD_ONLY=on` (auto-selects a port-forwarding-capable
-  P2P server — no server pin, no Address needed).
+  `VPN_PORT_FORWARDING=on`, `PORT_FORWARD_ONLY=on` (restricts to port-forwarding-capable
+  P2P servers), `SERVER_COUNTRIES=Sweden` (server pin). The ProtonVPN WireGuard key is
+  **account-scoped** — Gluetun picks the server from its own list and ignores the
+  `.conf`'s endpoint, so the pin is non-secret `values.yaml` config, not the key/`.conf`;
+  Gluetun reselects within Sweden if a server is retired.
 - **[C1] `FIREWALL_INPUT_PORTS=8080`** — required so the WebUI is reachable via the Pod
   interface (Service, Envoy, *arr, kubelet probes). Without it those are dropped.
 - **[C2] `FIREWALL_OUTBOUND_SUBNETS` — start empty, add only by test.** Cilium DNATs

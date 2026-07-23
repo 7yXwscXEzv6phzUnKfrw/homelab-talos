@@ -1575,6 +1575,8 @@ qbittorrent-validate: require-bash
     [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.securityContext.capabilities.add[]' "$values" | tr '\n' ' ')" == 'NET_ADMIN ' ]]
     [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.VPN_SERVICE_PROVIDER' "$values")" == 'protonvpn' ]]
     [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.VPN_PORT_FORWARDING' "$values")" == 'on' ]]
+    [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.PORT_FORWARD_ONLY' "$values")" == 'on' ]]
+    [[ -n "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.SERVER_COUNTRIES // ""' "$values")" ]]
     [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.FIREWALL_INPUT_PORTS' "$values")" == '8080' ]]
     [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH' "$values")" == '/gluetun/auth/config.toml' ]]
     [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.VPN_PORT_FORWARDING_UP_COMMAND' "$values")" != 'null' ]]
