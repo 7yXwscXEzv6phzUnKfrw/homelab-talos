@@ -30,6 +30,8 @@ ci:
     just kube flux-validate
     just kube foundation-validate
     just kube storage-validate
+    just kube csi-driver-smb-validate
+    just kube media-storage-validate
     just kube monitoring-validate
     just kube gatus-validate
     just kube homepage-validate
