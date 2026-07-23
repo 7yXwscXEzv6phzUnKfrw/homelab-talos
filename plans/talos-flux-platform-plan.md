@@ -1121,8 +1121,9 @@ automation is intentionally avoided.
 
 ## Phase 14: Media Platform — Requests and Observability
 
-Deploy **Overseerr** (the Plex-native request UI; preferred over Jellyseerr for a
-Plex library) linking Sonarr/Radarr/Plex. Add Gatus checks for every media UI plus a
+Deploy **Seerr** (the current maintained request UI at `docs.seerr.dev` — the successor
+to the now-stale Overseerr; do not deploy legacy Overseerr) linking Sonarr/Radarr/Plex.
+Add Gatus checks for every media UI plus a
 VPN-health check against the in-cluster Gluetun control server (never LAN-exposed,
 never logging API keys), Homepage `gethomepage.dev/*` auto-discovery annotations, and
 an optional media/VPN Grafana dashboard. Finalize `docs/phase-11-media.md` with
@@ -1131,7 +1132,7 @@ media NAS-owned; ProtonVPN forwarded-port loss), and the manual first-run settin
 
 ### Exit Gate (Phase 14)
 
-- Overseerr is the household request interface and can request into Sonarr/Radarr.
+- Seerr is the household request interface and can request into Sonarr/Radarr.
 - Gatus detects media application and VPN failures.
 
 ## Phase 15: Operations and Lifecycle
