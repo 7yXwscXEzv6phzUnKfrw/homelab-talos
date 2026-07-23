@@ -11,7 +11,7 @@ and requests + observability (Phase 14) follow as their own phases.
 | Deliverable | State |
 |---|---|
 | SMB CSI driver + shared `/data` RWX filesystem | **Complete** (bootstrapped) |
-| Plex (single replica, node-reschedule verified) | In progress (PR 11-2) |
+| Plex (single replica, node-reschedule verified) | **Reschedule verified** (2026-07-23); HW transcode pending (11-3) |
 | Plex hardware transcoding (Intel QuickSync) | Planned |
 
 ## Delivery pattern (every app)
@@ -122,8 +122,14 @@ Full acceptance test matrix to record before calling Phase 11 done:
 | SMB/NAS outage | `/config` DB stays healthy; media returns when the share is back; library not trashed |
 | Longhorn restore | Restore the `/config` backup into a throwaway PVC and start an isolated Plex against it |
 
-<!-- TODO: paste the plex-reschedule-verify output (orig node -> new node), the hard
-     node-down RTO, and the restore-test result once executed against the live cluster. -->
+**Evidence (2026-07-23):** `just kube plex-reschedule-verify` passed — pod moved
+`nuc2 -> nuc1`, the RWOP config volume re-attached and the SMB media re-mounted, and
+Plex returned Ready. This is the Phase-11 core milestone (single replica recreates on
+another NUC). The Plex bootstrap's `plex-verify` also passed (Kustomization + HelmRelease
+Ready, rollout complete, HTTPRoute Accepted, Pi-hole DNS, `/identity` over TLS).
+
+<!-- TODO (remaining, when convenient): hard node-down RTO measurement, one-replica-loss
+     check, SMB-outage behavior, and a Longhorn restore-into-new-PVC test. -->
 
 ## Plex hardware transcoding (Intel QuickSync)
 
