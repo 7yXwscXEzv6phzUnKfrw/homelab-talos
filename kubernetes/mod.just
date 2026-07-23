@@ -188,6 +188,65 @@ cilium-postflight:
 
 # Fail unless running under bash >= 4; macOS /bin/bash 3.2 does not honor set -e
 # for a failed bare [[ ]] mid-recipe, so these acceptance assertions would not gate.
+# Validate the built app manifests against Kubernetes + CRD schemas, offline of the
+# cluster (schemas are fetched over HTTPS). Secrets are kept (only the SOPS metadata
+# is stripped); CRDs absent from the schema sources are reported as skipped, not
+# failed, which is appropriate for this homelab during adoption.
+kubeconform: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    k8s_version="$(yq -p=toml -r '.tools.kubectl' .mise.toml 2>/dev/null)"
+    [[ "$k8s_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+      echo 'Could not derive the Kubernetes version from .mise.toml [tools].kubectl.' >&2
+      exit 1
+    }
+
+    # Assemble the datreeio CRD-catalog URL from shell vars so just does not try to
+    # interpolate kubeconform's own Go-template schema syntax (.Group / .ResourceKind).
+    lb='{'
+    rb='}'
+    crd_catalog="https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/${lb}${lb}.Group${rb}${rb}/${lb}${lb}.ResourceKind${rb}${rb}_${lb}${lb}.ResourceAPIVersion${rb}${rb}.json"
+
+    temp_dir="$(mktemp -d /tmp/homelab-talos-kubeconform.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+
+    # Build the flux-system aggregate (Flux Kustomization/HelmRelease/OCIRepository
+    # CRs) plus every per-app app/ and config/ root (the real Namespaces, HTTPRoutes,
+    # Deployments, Secrets, and CRs Flux reconciles).
+    kustomize build kubernetes/apps >"$temp_dir/all.yaml"
+    while IFS= read -r kfile; do
+      { echo '---'; kustomize build "$(dirname "$kfile")"; } >>"$temp_dir/all.yaml"
+    done < <(find kubernetes/apps -type f -name kustomization.yaml \( -path '*/app/kustomization.yaml' -o -path '*/config/kustomization.yaml' \) | sort)
+    yq ea 'del(.sops)' "$temp_dir/all.yaml" >"$temp_dir/validate.yaml"
+
+    kubeconform -strict -summary -ignore-missing-schemas \
+      -kubernetes-version "$k8s_version" \
+      -schema-location default \
+      -schema-location "$crd_catalog" \
+      "$temp_dir/validate.yaml"
+
+    echo "kubeconform passed against Kubernetes v${k8s_version} schemas (CRDs absent from the catalog reported as skipped)."
+
+# Operational check (NOT in `just ci`): warn when the committed Pi-hole CA is within
+# 30 days of expiry so it gets rotated. Time-based, so run it locally or on a
+# schedule rather than as a required PR gate.
+foundation-ca-expiry: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    pihole_ca='kubernetes/apps/networking/external-dns/app/pihole-ca.crt'
+    [[ -f "$pihole_ca" ]] || {
+      echo "Missing tracked Pi-hole CA: $pihole_ca" >&2
+      exit 1
+    }
+    if openssl x509 -in "$pihole_ca" -noout -checkend 2592000 >/dev/null; then
+      echo 'Pi-hole CA is valid for at least 30 more days.'
+    else
+      echo 'WARNING: the committed Pi-hole CA expires within 30 days; rotate it (see docs/pihole-integration.md).' >&2
+      exit 1
+    fi
+
 [private]
 require-bash:
     #!/usr/bin/env bash
@@ -572,7 +631,9 @@ foundation-validate:
     [[ "$(yq -r '.metadata.namespace' "$pihole_secret")" == 'external-dns' ]]
     ! rg -q 'PRIVATE KEY' "$pihole_ca"
     openssl verify -CAfile "$pihole_ca" "$pihole_ca" >/dev/null
-    openssl x509 -in "$pihole_ca" -noout -checkend 2592000 >/dev/null
+    # CA remaining-lifetime is a time-based check: it lives in
+    # `just kube foundation-ca-expiry`, kept OUT of `just ci` so it cannot turn an
+    # unrelated PR red purely because the calendar advanced.
 
     phase7_sources=(
       kubernetes/apps/security/cert-manager/ks.yaml

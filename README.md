@@ -196,6 +196,11 @@ available for focused developer validation.
 | `just kube storage-validate` | Validate the Longhorn source, encrypted CIFS Secret, backup-target CR, dependencies, and pinned chart render | — | Enabled in Phase 9; read-only |
 | `just bootstrap storage` | Reconcile the staged Longhorn Kustomizations in dependency order and run the acceptance gate | `STORAGE_BOOTSTRAP_CONFIRM` | Enabled in Phase 9; mutating after confirmation |
 | `just kube storage-verify` | Verify Longhorn health, node disks, default StorageClass, backup target, recurring jobs, and a two-replica test PVC | — | Enabled in Phase 9; creates and removes a test PVC |
+| `just ci` | Run the cluster-independent, secret-free validation gate (lint + verify + kubeconform + all `*-validate`) | — | Local + GitHub Actions; the PR gate |
+| `just repo hooks` | Install the git pre-commit hooks (idempotent) | — | Available |
+| `just repo lint` | Run all pre-commit hooks against the tree | — | Available |
+| `just kube kubeconform` | Validate the built app manifests against Kubernetes + CRD schemas | — | Available; read-only, fetches schemas over HTTPS |
+| `just kube foundation-ca-expiry` | Warn if the committed Pi-hole CA is within 30 days of expiry | — | Operational; time-based, kept out of `just ci` |
 
 The **Requires from operator** column lists inputs the recipe reads from your
 environment and refuses to run without. `SOPS_AGE_KEY`[`_FILE`] means either the
