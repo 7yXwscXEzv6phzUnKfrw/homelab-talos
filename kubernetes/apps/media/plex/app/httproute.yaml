@@ -19,7 +19,7 @@ metadata:
     gethomepage.dev/widget.type: "plex"
     gethomepage.dev/widget.url: "http://plex.media.svc.cluster.local:32400"
     gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_PLEX_TOKEN}}"
-    gethomepage.dev/widget.fields: '["streams","movies","tv"]'
+    gethomepage.dev/widget.fields: '["movies","tv","streams"]'
 spec:
   hostnames:
     - plex.lab.supermorphic.com
