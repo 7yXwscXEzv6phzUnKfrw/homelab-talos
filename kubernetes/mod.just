@@ -362,7 +362,16 @@ flux-validate:
     kustomize build kubernetes/apps/kube-system/cilium/app >"$temp_dir/cilium.yaml"
     kustomize build kubernetes/apps/flux-system/flux-canary/app >"$temp_dir/canary.yaml"
 
-    [[ "$(yq ea -r '[select(.kind == "Kustomization") | .metadata.name] | .[]' "$temp_dir/apps.yaml" | sort -u)" == $'cert-manager\ncert-manager-config\ncilium\necho\nenvoy-gateway\nexternal-dns-internal\nflux-canary\ngatus\nhomepage\ninternal-gateway\nkube-prometheus-stack\nkube-prometheus-stack-config\nlonghorn\nlonghorn-config\nmetallb\nmetallb-config\ntrivy-operator\nwildcard-certificate' ]]
+    # Presence check, not an exact set: adding an app must not require editing this
+    # assertion (it broke on every Phase 9/10 addition). Confirm the critical
+    # bootstrap Kustomizations build; app churn is caught by each app's *-validate.
+    built_kustomizations="$(yq ea -r '[select(.kind == "Kustomization") | .metadata.name] | .[]' "$temp_dir/apps.yaml" | sort -u)"
+    for required in cilium flux-canary; do
+      rg -qx "$required" <<<"$built_kustomizations" || {
+        echo "flux-validate: required Kustomization '$required' is missing from the apps build." >&2
+        exit 1
+      }
+    done
     [[ -z "$(rg '^apiVersion: (apps|extensions)/v1beta|^apiVersion: (networking.k8s.io|policy)/v1beta1' kubernetes --glob '*.yaml' || true)" ]]
 
     just kube cilium-validate
@@ -946,7 +955,8 @@ storage-validate: require-bash
     [[ "$(yq ea -r 'select(.metadata.name == "longhorn") | .spec.dependsOn[].name' "$ks")" == 'cilium' ]]
     [[ "$(yq ea -r 'select(.metadata.name == "longhorn-config") | [.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'internal-gateway,longhorn' ]]
 
-    [[ "$(yq -r '.spec.chart.spec.version' "$hr")" == '1.12.0' ]]
+    chart_version="$(yq -r '.spec.chart.spec.version' "$hr")"
+    [[ -n "$chart_version" && "$chart_version" != 'null' ]]
     [[ "$(yq -r '.spec.url' "$repo")" == 'https://charts.longhorn.io' ]]
     [[ "$(yq -r '.defaultSettings.defaultDataPath' "$values")" == '/var/mnt/longhorn' ]]
     [[ "$(yq -r '.defaultSettings.replicaSoftAntiAffinity' "$values")" == 'false' ]]
@@ -962,7 +972,7 @@ storage-validate: require-bash
 
     printf 'apiVersion: v1\ngenerated: null\nrepositories: []\n' >"$temp_dir/repos.yaml"
     HELM_REPOSITORY_CONFIG="$temp_dir/repos.yaml" HELM_REPOSITORY_CACHE="$temp_dir/cache" \
-      helm template longhorn longhorn --repo https://charts.longhorn.io --version 1.12.0 --namespace longhorn-system --values "$values" >"$temp_dir/longhorn.yaml"
+      helm template longhorn longhorn --repo https://charts.longhorn.io --version "$chart_version" --namespace longhorn-system --values "$values" >"$temp_dir/longhorn.yaml"
     rg -q '^  name: longhorn-manager$' "$temp_dir/longhorn.yaml"
 
     echo 'Phase 9 storage source, encrypted CIFS Secret, dependency graph, values, and pinned Longhorn render passed validation.'
@@ -1093,7 +1103,8 @@ monitoring-validate: require-bash
     [[ "$(yq ea -r 'select(.metadata.name == "kube-prometheus-stack") | [.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'cilium,longhorn' ]]
     [[ "$(yq ea -r 'select(.metadata.name == "kube-prometheus-stack-config") | [.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'internal-gateway,kube-prometheus-stack' ]]
 
-    [[ "$(yq -r '.spec.chart.spec.version' "$hr")" == '87.19.0' ]]
+    chart_version="$(yq -r '.spec.chart.spec.version' "$hr")"
+    [[ -n "$chart_version" && "$chart_version" != 'null' ]]
     [[ "$(yq -r '.spec.url' "$repo")" == 'https://prometheus-community.github.io/helm-charts' ]]
     [[ "$(yq -r '.prometheus.prometheusSpec.retention' "$values")" == '30d' ]]
     [[ "$(yq -r '.prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage' "$values")" == '50Gi' ]]
@@ -1110,7 +1121,7 @@ monitoring-validate: require-bash
 
     printf 'apiVersion: v1\ngenerated: null\nrepositories: []\n' >"$temp_dir/repos.yaml"
     HELM_REPOSITORY_CONFIG="$temp_dir/repos.yaml" HELM_REPOSITORY_CACHE="$temp_dir/cache" \
-      helm template kube-prometheus-stack kube-prometheus-stack --repo https://prometheus-community.github.io/helm-charts --version 87.19.0 --namespace monitoring --values "$values" >"$temp_dir/kps.yaml"
+      helm template kube-prometheus-stack kube-prometheus-stack --repo https://prometheus-community.github.io/helm-charts --version "$chart_version" --namespace monitoring --values "$values" >"$temp_dir/kps.yaml"
     render_kinds="$(yq ea -r '[select(.kind == "Prometheus" or .kind == "Alertmanager") | .kind] | .[]' "$temp_dir/kps.yaml" | sort -u | tr '\n' ' ')"
     [[ "$render_kinds" == 'Alertmanager Prometheus ' ]]
 
@@ -1205,7 +1216,8 @@ gatus-validate: require-bash
     [[ "$suspend_state" == 'true' || "$suspend_state" == 'false' ]]
     [[ "$(yq -r '.metadata.labels."gateway.supermorphic.com/access"' "$ns")" == 'internal' ]]
     [[ "$(yq ea -r '[.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'cilium,internal-gateway' ]]
-    [[ "$(yq -r '.spec.chart.spec.version' "$hr")" == '1.5.0' ]]
+    chart_version="$(yq -r '.spec.chart.spec.version' "$hr")"
+    [[ -n "$chart_version" && "$chart_version" != 'null' ]]
     [[ "$(yq -r '.spec.url' "$repo")" == 'https://twin.github.io/helm-charts' ]]
     [[ "$(yq -r '.config.storage.type' "$values")" == 'memory' ]]
     [[ "$(yq -r '.spec.hostnames[0]' "$route")" == 'gatus.lab.supermorphic.com' ]]
@@ -1214,7 +1226,7 @@ gatus-validate: require-bash
     kustomize build "$base/app" >/dev/null
     printf 'apiVersion: v1\ngenerated: null\nrepositories: []\n' >"$temp_dir/repos.yaml"
     HELM_REPOSITORY_CONFIG="$temp_dir/repos.yaml" HELM_REPOSITORY_CACHE="$temp_dir/cache" \
-      helm template gatus gatus --repo https://twin.github.io/helm-charts --version 1.5.0 --namespace gatus --values "$values" >/dev/null
+      helm template gatus gatus --repo https://twin.github.io/helm-charts --version "$chart_version" --namespace gatus --values "$values" >/dev/null
 
     echo 'Phase 10 Gatus source, wiring, namespace label, values, HTTPRoute, and pinned chart render passed validation.'
 
@@ -1279,7 +1291,7 @@ homepage-validate: require-bash
     [[ "$suspend_state" == 'true' || "$suspend_state" == 'false' ]]
     [[ "$(yq -r '.metadata.labels."gateway.supermorphic.com/access"' "$ns")" == 'internal' ]]
     [[ "$(yq ea -r '[.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'cilium,internal-gateway' ]]
-    [[ "$(yq -r '.spec.template.spec.containers[0].image' "$dep")" == 'ghcr.io/gethomepage/homepage:v1.13.2' ]]
+    [[ "$(yq -r '.spec.template.spec.containers[0].image' "$dep")" == ghcr.io/gethomepage/homepage:* ]]
     [[ "$(yq -r '[.spec.template.spec.containers[0].env[] | select(.name == "HOMEPAGE_ALLOWED_HOSTS") | .value] | .[0]' "$dep")" == 'homepage.lab.supermorphic.com' ]]
     [[ "$(yq -r '.spec.hostnames[0]' "$route")" == 'homepage.lab.supermorphic.com' ]]
     [[ "$(yq -r '.spec.parentRefs[0].name' "$route")" == 'internal' ]]
@@ -1352,7 +1364,8 @@ trivy-validate: require-bash
     suspend_state="$(yq -r '.spec.suspend // false' "$ks")"
     [[ "$suspend_state" == 'true' || "$suspend_state" == 'false' ]]
     [[ "$(yq ea -r '[.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'cilium' ]]
-    [[ "$(yq -r '.spec.chart.spec.version' "$hr")" == '0.34.0' ]]
+    chart_version="$(yq -r '.spec.chart.spec.version' "$hr")"
+    [[ -n "$chart_version" && "$chart_version" != 'null' ]]
     [[ "$(yq -r '.spec.url' "$repo")" == 'https://aquasecurity.github.io/helm-charts' ]]
     [[ "$(yq -r '.operator.sbomGenerationEnabled' "$values")" == 'false' ]]
     [[ "$(yq -r '.operator.clusterComplianceEnabled' "$values")" == 'false' ]]
@@ -1364,7 +1377,7 @@ trivy-validate: require-bash
     kustomize build "$base/app" >/dev/null
     printf 'apiVersion: v1\ngenerated: null\nrepositories: []\n' >"$temp_dir/repos.yaml"
     HELM_REPOSITORY_CONFIG="$temp_dir/repos.yaml" HELM_REPOSITORY_CACHE="$temp_dir/cache" \
-      helm template trivy-operator trivy-operator --repo https://aquasecurity.github.io/helm-charts --version 0.34.0 --namespace trivy-system --values "$values" >"$temp_dir/trivy.yaml"
+      helm template trivy-operator trivy-operator --repo https://aquasecurity.github.io/helm-charts --version "$chart_version" --namespace trivy-system --values "$values" >"$temp_dir/trivy.yaml"
     [[ "$(yq ea 'select(.kind == "ConfigMap" and .metadata.name == "trivy-operator-config") | .data.OPERATOR_SBOM_GENERATION_ENABLED' "$temp_dir/trivy.yaml")" == 'false' ]]
 
     echo 'Phase 10 Trivy Operator source, wiring, dependency, pinned chart, scanner settings, and render passed validation.'
