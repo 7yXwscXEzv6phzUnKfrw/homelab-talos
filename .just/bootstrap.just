@@ -844,6 +844,8 @@ foundation:
 
     just repo secrets
     just kube foundation-validate
+    # Pull main so flux-verify's artifact==origin/main check passes right after a merge.
+    flux reconcile source git flux-system --kubeconfig "$kubeconfig"
     just kube flux-verify
     flux reconcile kustomization cluster-apps \
       --namespace flux-system \
@@ -977,6 +979,8 @@ storage:
     }
 
     just kube storage-validate
+    # Pull main so flux-verify's artifact==origin/main check passes right after a merge.
+    flux reconcile source git flux-system --kubeconfig "$kubeconfig"
     just kube flux-verify
     flux reconcile kustomization cluster-apps \
       --namespace flux-system \
@@ -1066,6 +1070,8 @@ monitoring:
     }
 
     just kube monitoring-validate
+    # Pull main so flux-verify's artifact==origin/main check passes right after a merge.
+    flux reconcile source git flux-system --kubeconfig "$kubeconfig"
     just kube flux-verify
     flux reconcile kustomization cluster-apps \
       --namespace flux-system \
@@ -1145,6 +1151,8 @@ gatus:
     }
 
     just kube gatus-validate
+    # Pull main so flux-verify's artifact==origin/main check passes right after a merge.
+    flux reconcile source git flux-system --kubeconfig "$kubeconfig"
     just kube flux-verify
     flux reconcile kustomization cluster-apps \
       --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
@@ -1211,6 +1219,8 @@ homepage:
     }
 
     just kube homepage-validate
+    # Pull main so flux-verify's artifact==origin/main check passes right after a merge.
+    flux reconcile source git flux-system --kubeconfig "$kubeconfig"
     just kube flux-verify
     flux reconcile kustomization cluster-apps \
       --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
@@ -1278,6 +1288,8 @@ trivy:
     }
 
     just kube trivy-validate
+    # Pull main so flux-verify's artifact==origin/main check passes right after a merge.
+    flux reconcile source git flux-system --kubeconfig "$kubeconfig"
     just kube flux-verify
     flux reconcile kustomization cluster-apps \
       --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
@@ -1344,6 +1356,8 @@ metrics-server:
     }
 
     just kube metrics-server-validate
+    # Pull main so flux-verify's artifact==origin/main check passes right after a merge.
+    flux reconcile source git flux-system --kubeconfig "$kubeconfig"
     just kube flux-verify
     flux reconcile kustomization cluster-apps \
       --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
