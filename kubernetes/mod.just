@@ -1529,6 +1529,149 @@ intel-gpu-plugin-verify: require-bash
     }
     echo "Phase 11 intel-gpu-plugin acceptance passed: Kustomization Ready, DaemonSet rolled out, $advertised node(s) advertise gpu.intel.com/i915."
 
+# Validate the Phase 12 qBittorrent+Gluetun source: files, wiring, dependency,
+# encrypted ProtonVPN Secret, the sidecar/kill-switch essentials, and the pinned render.
+qbittorrent-validate: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    base='kubernetes/apps/media/qbittorrent'
+    ks="$base/ks.yaml"
+    hr="$base/app/helmrelease.yaml"
+    values="$base/app/values.yaml"
+    route="$base/app/httproute.yaml"
+    secret="$base/app/protonvpn.sops.yaml"
+    oci='kubernetes/apps/media/namespace/app/ocirepository.yaml'
+    expected_recipient="$(yq -r '.creation_rules[] | select(.path_regex | test("kubernetes")) | .age' .sops.yaml)"
+    temp_dir="$(mktemp -d /tmp/homelab-talos-qbt-validate.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+
+    for f in "$ks" "$hr" "$values" "$route" "$secret" "$base/app/kustomization.yaml" "$oci"; do
+      [[ -f "$f" ]] || {
+        echo "Missing Phase 12 qBittorrent source: $f" >&2
+        echo 'Run just repo protonvpn-secrets if the ProtonVPN Secret is missing.' >&2
+        exit 1
+      }
+    done
+
+    rg -qx '  - ./qbittorrent/ks.yaml' kubernetes/apps/media/kustomization.yaml || {
+      echo 'Refusing: ./qbittorrent/ks.yaml is not wired into kubernetes/apps/media/kustomization.yaml.' >&2
+      exit 1
+    }
+
+    suspend_state="$(yq -r '.spec.suspend // false' "$ks")"
+    [[ "$suspend_state" == 'true' || "$suspend_state" == 'false' ]]
+    [[ "$(yq -r '[.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'internal-gateway,media-storage' ]]
+    [[ "$(yq -r '.spec.decryption.provider' "$ks")" == 'sops' ]]
+    [[ "$(yq -r '.spec.chartRef.name' "$hr")" == 'app-template' ]]
+
+    [[ "$(sops filestatus "$secret" | yq -r '.encrypted')" == 'true' ]]
+    [[ "$(yq -r '.sops.age[].recipient' "$secret" | sort -u)" == "$expected_recipient" ]]
+    [[ "$(yq -r '.metadata.name' "$secret")" == 'protonvpn' ]]
+    [[ "$(yq -r '.metadata.namespace' "$secret")" == 'media' ]]
+
+    # Gluetun native sidecar + kill-switch essentials.
+    [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.restartPolicy' "$values")" == 'Always' ]]
+    [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.securityContext.capabilities.add[]' "$values" | tr '\n' ' ')" == 'NET_ADMIN ' ]]
+    [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.VPN_SERVICE_PROVIDER' "$values")" == 'protonvpn' ]]
+    [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.VPN_PORT_FORWARDING' "$values")" == 'on' ]]
+    [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.FIREWALL_INPUT_PORTS' "$values")" == '8080' ]]
+    [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH' "$values")" == '/gluetun/auth/config.toml' ]]
+    [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.VPN_PORT_FORWARDING_UP_COMMAND' "$values")" != 'null' ]]
+    [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.VPN_PORT_FORWARDING_DOWN_COMMAND' "$values")" != 'null' ]]
+    [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.probes.startup.spec.httpGet.port' "$values")" == '8000' ]]
+    # Only Gluetun is privileged; qBittorrent drops all caps.
+    [[ "$(yq -r '.controllers.qbittorrent.containers.app.securityContext.capabilities.drop[]' "$values" | tr '\n' ' ')" == 'ALL ' ]]
+    # Device + auth config mounted; config on Longhorn RWO; shared /data.
+    [[ "$(yq -r '.persistence.tun.hostPath' "$values")" == '/dev/net/tun' ]]
+    [[ "$(yq -r '.persistence.tun.hostPathType' "$values")" == 'CharDevice' ]]
+    [[ "$(yq -r '.persistence."gluetun-auth".type' "$values")" == 'secret' ]]
+    [[ "$(yq -r '.persistence.config.storageClass' "$values")" == 'longhorn' ]]
+    [[ "$(yq -r '.persistence.data.existingClaim' "$values")" == 'media-data' ]]
+
+    [[ "$(yq -r '.spec.hostnames[0]' "$route")" == 'qbittorrent.lab.supermorphic.com' ]]
+    [[ "$(yq -r '.spec.parentRefs[0].name' "$route")" == 'internal' ]]
+
+    chart_url="$(yq -r '.spec.url' "$oci")"
+    chart_tag="$(yq -r '.spec.ref.tag' "$oci")"
+    kustomize build "$base/app" >/dev/null
+    helm template qbittorrent "$chart_url" --version "$chart_tag" --namespace media --values "$values" >"$temp_dir/render.yaml"
+    [[ "$(yq -r 'select(.kind == "Deployment") | .metadata.name' "$temp_dir/render.yaml")" == 'qbittorrent' ]]
+    [[ "$(yq -r 'select(.kind == "Deployment") | .spec.template.spec.initContainers[] | select(.name == "gluetun") | .restartPolicy' "$temp_dir/render.yaml")" == 'Always' ]]
+
+    echo 'Phase 12 qBittorrent+Gluetun source, encrypted ProtonVPN Secret, sidecar/kill-switch config, dependency graph, and pinned render passed validation.'
+
+# Verify the live Phase 12 qBittorrent: Kustomization + HelmRelease Ready, rollout,
+# HTTPRoute Accepted, DNS, and the WebUI reachable over the internal gateway. The VPN
+# kill-switch is proven separately by qbittorrent-killswitch-verify.
+qbittorrent-verify: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    ns='media'
+    gateway_ip='192.168.90.30'
+    host='qbittorrent.lab.supermorphic.com'
+
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization qbittorrent --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || { echo 'qbittorrent Kustomization not Ready.' >&2; exit 1; }
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get helmrelease qbittorrent --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || { echo 'qbittorrent HelmRelease not Ready.' >&2; exit 1; }
+    kubectl --kubeconfig "$kubeconfig" --namespace "$ns" rollout status deployment/qbittorrent --timeout=5m
+    accepted=false
+    for _ in {1..24}; do
+      [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get httproute qbittorrent --output jsonpath='{.status.parents[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == 'True' ]] && { accepted=true; break; }
+      sleep 5
+    done
+    [[ "$accepted" == 'true' ]] || { echo 'qbittorrent HTTPRoute was not Accepted.' >&2; exit 1; }
+    [[ "$(dig +short @192.168.90.2 "$host" A | sort -u)" == "$gateway_ip" ]] || { echo "DNS for $host does not resolve to $gateway_ip." >&2; exit 1; }
+    curl --silent --fail --resolve "$host:443:$gateway_ip" "https://$host/" >/dev/null || { echo 'qBittorrent WebUI not reachable via the gateway.' >&2; exit 1; }
+    echo 'Phase 12 qBittorrent acceptance passed. Run qbittorrent-killswitch-verify (the blocking VPN gate) before flipping suspend: false.'
+
+# BLOCKING VPN kill-switch gate (handoff §751-758). NOT in `just ci` — operator-run,
+# it mutates the running pod (stops/kills the VPN) and needs the live ProtonVPN tunnel.
+# Proves qBittorrent egresses only through ProtonVPN and fails closed when the VPN drops.
+qbittorrent-killswitch-verify: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    ns='media'
+    pod="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get pod -l app.kubernetes.io/name=qbittorrent -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
+    [[ -n "$pod" ]] || { echo 'No qbittorrent pod found.' >&2; exit 1; }
+    gx() { kubectl --kubeconfig "$kubeconfig" --namespace "$ns" exec "$pod" -c gluetun -- "$@"; }
+    apikey="$(gx sh -c 'grep -E "^apikey" /gluetun/auth/config.toml | sed -E "s/.*\"(.*)\".*/\1/"' 2>/dev/null | tr -d "\r")"
+    [[ -n "$apikey" ]] || { echo 'Could not read control-server apikey from /gluetun/auth/config.toml.' >&2; exit 1; }
+    ctl() { gx wget -qO- --header "X-API-Key: $apikey" "$@"; }
+
+    # 1. Baseline: VPN public IP (via control server) must differ from the node WAN IP.
+    vpn_ip="$(ctl http://localhost:8000/v1/publicip/ip | yq -r '.public_ip')"
+    [[ -n "$vpn_ip" && "$vpn_ip" != 'null' ]] || { echo 'No VPN public IP from control server.' >&2; exit 1; }
+    node_ip="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" run kswan --image=curlimages/curl:8.11.1 --restart=Never --rm -i --quiet --command -- curl -sS -m 12 https://ifconfig.me 2>/dev/null | tr -d '\r\n ' || true)"
+    echo "VPN public IP=$vpn_ip  node WAN IP=${node_ip:-unknown}"
+    [[ -n "$node_ip" && "$vpn_ip" == "$node_ip" ]] && { echo 'LEAK: qBittorrent VPN egress IP equals the node WAN IP.' >&2; exit 1; }
+    fport="$(ctl http://localhost:8000/v1/portforward | yq -r '.port' 2>/dev/null || echo '?')"
+    echo "forwarded port: $fport"
+
+    # 2. Kill switch: stop the VPN, then qBittorrent egress must fail closed.
+    gx wget -qO- --method=PUT --header "X-API-Key: $apikey" --body-data '{"status":"stopped"}' http://localhost:8000/v1/vpn/status >/dev/null
+    sleep 3
+    if kubectl --kubeconfig "$kubeconfig" --namespace "$ns" exec "$pod" -c app -- sh -c 'wget -qO- -T 8 https://ifconfig.me' >/dev/null 2>&1; then
+      gx wget -qO- --method=PUT --header "X-API-Key: $apikey" --body-data '{"status":"running"}' http://localhost:8000/v1/vpn/status >/dev/null 2>&1 || true
+      echo 'LEAK: qBittorrent reached the internet with the VPN stopped.' >&2
+      exit 1
+    fi
+    echo 'Kill switch holds: qBittorrent egress blocked while the VPN is stopped.'
+
+    # 3. Recovery: restart the VPN, confirm the public IP returns.
+    gx wget -qO- --method=PUT --header "X-API-Key: $apikey" --body-data '{"status":"running"}' http://localhost:8000/v1/vpn/status >/dev/null
+    back=false
+    for _ in {1..24}; do
+      ip="$(ctl http://localhost:8000/v1/publicip/ip 2>/dev/null | yq -r '.public_ip' 2>/dev/null || true)"
+      [[ -n "$ip" && "$ip" != 'null' ]] && { back=true; echo "VPN recovered, public IP=$ip"; break; }
+      sleep 10
+    done
+    [[ "$back" == 'true' ]] || { echo 'VPN did not recover after restart.' >&2; exit 1; }
+    echo 'Phase 12 kill-switch verify passed: VPN egress isolated, fail-closed on VPN stop, recovered on restart. Also power-test by killing the gluetun container and re-running if you want the hard-failure path.'
+
 # Validate the Phase 10 monitoring source: files, encrypted Grafana Secret,
 # dependency graph, staged-suspend uniformity, key values, wiring, HTTPRoutes,
 # and the pinned kube-prometheus-stack render.

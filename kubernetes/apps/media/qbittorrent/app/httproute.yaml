@@ -1,0 +1,36 @@
+---
+# yaml-language-server: $schema=https://k8s-schemas.home-operations.com/gateway.networking.k8s.io/httproute_v1.json
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: qbittorrent
+  namespace: media
+  annotations:
+    external-dns.k8s.io/audience: internal
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "qBittorrent"
+    gethomepage.dev/description: "Download client (VPN)"
+    gethomepage.dev/pod-selector: "app.kubernetes.io/name=qbittorrent"
+    gethomepage.dev/group: "Media"
+    gethomepage.dev/icon: "qbittorrent.svg"
+    gethomepage.dev/href: "https://qbittorrent.lab.supermorphic.com"
+spec:
+  hostnames:
+    - qbittorrent.lab.supermorphic.com
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: internal
+      namespace: networking
+      sectionName: https
+  rules:
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: qbittorrent
+          port: 8080
+          weight: 1
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
