@@ -26,7 +26,7 @@ Keep the sound architectural choices from the earlier plan:
 - Flux for Kubernetes reconciliation
 - MetalLB and Envoy Gateway for internal ingress
 - Longhorn for replicated block storage
-- NFS from the UNAS Pro for bulk media and downloads
+- SMB/CIFS from the UNAS Pro for bulk media and downloads
 
 The work is divided into gated phases. Phases 0 through 8 form the foundation
 milestone. No Longhorn, greenfield platform application, or media deployment
@@ -376,7 +376,7 @@ secret directly to its consuming namespace. External Secrets can be reconsidered
 when secret rotation or multi-cluster distribution becomes painful enough to
 justify the additional service.
 
-### Why Longhorn Plus NFS Instead of One Storage System
+### Why Longhorn Plus SMB Instead of One Storage System
 
 The workloads have two different storage profiles. Databases, application
 configuration, and small stateful services need Kubernetes-managed block volumes
@@ -393,14 +393,15 @@ backups remain mandatory because replicas are availability, not backup.
 Rook/Ceph was not chosen because three single-disk converged nodes offer limited
 failure-domain diversity while adding substantially more memory, networking, and
 recovery complexity. Plain local-path storage is simpler but provides no replica
-failover. Putting every PVC directly on NFS would make the NAS a synchronous
+failover. Putting every PVC directly on the NAS share would make it a synchronous
 dependency for latency-sensitive application state.
 
 Longhorn receives a dedicated Talos user volume at `/var/mnt/longhorn` rather
 than sharing EPHEMERAL. Capacity isolation prevents a replica rebuild or runaway
 volume from consuming the filesystem that holds etcd, logs, and container images.
-The UNAS NFS CSI driver is used separately for `/media` and `/downloads`, avoiding
-wasteful Longhorn replication of large replaceable or externally protected files.
+The UNAS SMB CSI driver provides one shared `/data` filesystem (media plus
+downloads on a single share, for hardlink-safe imports), avoiding wasteful Longhorn
+replication of large replaceable or externally protected files.
 See the [Longhorn installation requirements](https://longhorn.io/docs/1.12.0/deploy/install/).
 
 ### Why Lifecycle Automation Is Deferred
@@ -953,9 +954,10 @@ manual backup→restore and a post-reboot replica rebuild) are noted in the doc.
 
 > **Scope (revised 2026-07-22): Phase 9 ships Longhorn only.** Steps 7–10 (NFS CSI
 > and the bulk media `/data` filesystem) are **deferred to Phase 11**. The UNAS Pro
-> has NFS disabled and serves SMB/CIFS shares; the media consumer (Plex) runs
-> off-cluster on the Mac Mini; and the in-cluster media/download apps that need
-> `/data` do not exist until Phase 11. When built in Phase 11, use `csi-driver-smb`
+> has NFS disabled and serves SMB/CIFS shares; and the in-cluster media/download
+> apps that need `/data` (including Plex, which moves into the cluster in Phase 11 —
+> it historically ran off-cluster on the Mac Mini) do not exist until Phase 11. When
+> built in Phase 11, use `csi-driver-smb`
 > against `//192.168.0.3/Prometheus` rather than NFS (SMB preserves the hardlink
 > requirement within a share). Steps 1–6 (Longhorn) are the Phase 9 deliverable.
 
@@ -1036,24 +1038,103 @@ Suggested order:
 3. Homepage
 4. Trivy Operator if resource use is acceptable
 
-## Phase 11: Media Platform
+## Phase 11: Media Platform — Shared Storage and Plex
 
-1. Verify the `i915` extension exposes `/dev/dri/renderD128` on all appropriate
-   NUCs.
-2. Deploy the Intel device plugin and validate GPU resource discovery.
-3. Create the media namespace and mount the single hardlink-safe NFS `/data`
-   volume from Phase 9 (with `downloads/` and `media/` subfolders) into the media
-   applications. Do not create separate download and media PVCs.
-4. Deploy Gluetun and the selected download client in one pod/network namespace.
-5. Deploy Prowlarr, Sonarr, Radarr, Jellyseerr, and Plex.
-6. Store application configuration on Longhorn block volumes and bulk
-   downloads/media on the shared NFS `/data` volume. Point the Plex transcode
-   scratch at the node-local or `tmpfs` location chosen in Phase 9.
-7. Prove VPN egress, download/import flow, hardlinked atomic media moves within
-   `/data`, and Plex hardware transcoding before declaring the phase complete.
-8. Keep Plex LAN-only; public streaming exposure remains deferred.
+The media platform is large enough to be split across four whole-number phases
+(11–14) so each ships and is verified independently. Detailed runbook:
+[`docs/phase-11-media.md`](../docs/phase-11-media.md); the repository-native
+architecture is in
+[`plans/media-stack-architecture-plan.md`](media-stack-architecture-plan.md).
+Common decisions across 11–14: the bjw-s **app-template `5.0.1`** chart
+(OCIRepository) with one HelmRelease per app and all image tags pinned; a single
+`media` namespace at `pod-security…/enforce: privileged` plus the internal
+gateway-access label; SOPS-encrypted secrets via guarded `just repo *-secrets`;
+UIs exposed only through the internal Envoy Gateway on `*.lab.supermorphic.com`.
 
-## Phase 12: Operations and Lifecycle
+Phase 11 stands up the shared media filesystem and brings **Plex into the cluster**
+(it historically ran off-cluster on the Mac Mini). Its gating milestone is a
+single-replica Plex that survives a node failure.
+
+1. **Shared `/data` storage foundation.** Deploy the SMB CSI driver
+   (`csi-driver-smb`) and back a single **static RWX PV** with `//192.168.0.3/`
+   `Prometheus`, bound to a `media-data` PVC and mounted at `/data` in every media
+   pod, with `downloads/` and `media/` subfolders on the one share. Do not create
+   separate download and media PVCs, and do not place bulk media on Longhorn. Prove
+   a file moved between `/data/downloads` and `/data/media` becomes a **hardlink**
+   (the deferred Phase-9 step 10) before adding any application.
+2. **Plex (single replica).** Deploy Plex on a Longhorn RWO config PVC with
+   `strategy: Recreate`; mount `media-data` at `/data/media`; put transcode scratch
+   on node-local `emptyDir`/`tmpfs`, never the NAS. Plex is single-instance by
+   design (no active-active); the RWX share is shared across pods/apps, not for Plex
+   replicas. Expose `plex.lab.supermorphic.com`, LAN-only; public streaming
+   deferred.
+3. **Hardware transcoding.** Verify the `i915` extension exposes
+   `/dev/dri/renderD128` on all NUCs, deploy the Intel device plugin, validate GPU
+   resource discovery, and enable Plex QuickSync via a `gpu.intel.com/i915` request.
+
+### Exit Gate (Phase 11)
+
+- A file moved between `/data/downloads` and `/data/media` is a hardlink (no extra
+  space).
+- Plex is reachable at `plex.lab.supermorphic.com` over the internal gateway with
+  valid wildcard TLS.
+- **The single-replica Plex pod recreates on another NUC after a node failure**,
+  with the Longhorn RWO config volume re-attached and the SMB media re-mounted and
+  the library intact (the core milestone of this phase).
+- Plex hardware transcoding is confirmed using `/dev/dri`.
+
+## Phase 12: Media Platform — VPN Download Client
+
+Deploy **qBittorrent + Gluetun** (ProtonVPN WireGuard) as a single app-template Pod
+sharing one network namespace. Gluetun runs as a native sidecar (restartPolicy
+`Always` + startupProbe) so qBittorrent starts only after the tunnel and firewall
+are up (fail-closed at startup); Gluetun's firewall kill switch is the ongoing
+protection. Grant only `NET_ADMIN` + a `hostPath` `/dev/net/tun` (CharDevice) — no
+privileged mode, no host networking. ProtonVPN port forwarding uses Gluetun's native
+`VPN_PORT_FORWARDING=on` + `VPN_PORT_FORWARDING_UP_COMMAND` to set qBittorrent's
+listen port on each (re)connect. WireGuard credentials live in a SOPS Secret;
+Gluetun's control API is in-cluster only (no HTTPRoute/LoadBalancer). qBittorrent
+config on Longhorn RWO/`Recreate`; `/data` from the shared SMB PVC.
+
+### Exit Gate (Phase 12)
+
+- The Pod's public IP resolves to ProtonVPN, not the home WAN.
+- Breaking the tunnel fails qBittorrent closed (no fallback to the node route);
+  restoring it reacquires and reapplies the forwarded port without manual editing.
+- qBittorrent Web UI/API reachable via the internal gateway with authentication on.
+
+## Phase 13: Media Platform — Automation
+
+Deploy **Prowlarr** (indexer manager; Longhorn config PVC only), then **Sonarr** and
+**Radarr** (Longhorn config PVCs plus the shared `/data`). Root folders
+`/data/media/tv` and `/data/media/movies`; download client
+`http://qbittorrent.media.svc.cluster.local:8080`. Size for library scans/imports
+(memory limits generous, no CPU limits per convention). API keys and inter-app links
+are manual first-run settings persisted in the config PVCs — declarative *arr
+automation is intentionally avoided.
+
+### Exit Gate (Phase 13)
+
+- Prowlarr syncs indexers into Sonarr and Radarr.
+- Sonarr/Radarr reach qBittorrent through its Service and import a completed test
+  download into the library via a **hardlink** (no duplicate payload) that Plex sees.
+
+## Phase 14: Media Platform — Requests and Observability
+
+Deploy **Overseerr** (the Plex-native request UI; preferred over Jellyseerr for a
+Plex library) linking Sonarr/Radarr/Plex. Add Gatus checks for every media UI plus a
+VPN-health check against the in-cluster Gluetun control server (never LAN-exposed,
+never logging API keys), Homepage `gethomepage.dev/*` auto-discovery annotations, and
+an optional media/VPN Grafana dashboard. Finalize `docs/phase-11-media.md` with
+acceptance evidence, the recovery runbook (config PVCs via Longhorn backup; bulk
+media NAS-owned; ProtonVPN forwarded-port loss), and the manual first-run settings.
+
+### Exit Gate (Phase 14)
+
+- Overseerr is the household request interface and can request into Sonarr/Radarr.
+- Gatus detects media application and VPN failures.
+
+## Phase 15: Operations and Lifecycle
 
 - Add Renovate in PR-only mode with dependency grouping and no automatic merge.
   Renovate enters the established PR + `just ci` gate (a private repo needs the Mend
@@ -1074,7 +1155,7 @@ Suggested order:
 - If adopted, set tuppr control-plane parallelism to one and require health checks
   for etcd, nodes, Cilium, and critical workloads.
 
-## Phase 13: Deferred Expansion
+## Phase 16: Deferred Expansion
 
 Create separate plans for:
 
