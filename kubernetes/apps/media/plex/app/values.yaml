@@ -60,6 +60,13 @@ persistence:
     accessMode: ReadWriteOncePod
     size: 30Gi
     storageClass: longhorn
+    # Survive a full app teardown: helm.sh/resource-policy=keep stops a helm
+    # uninstall / Flux prune from deleting this PVC (the longhorn StorageClass
+    # reclaims Delete, so losing the PVC would lose the data). The Plex library DB
+    # then persists across redeploys; the daily Longhorn backup to the UNAS covers
+    # catastrophic loss.
+    annotations:
+      helm.sh/resource-policy: keep
     globalMounts:
       - path: /config
   transcode:
