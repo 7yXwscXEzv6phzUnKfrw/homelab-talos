@@ -4,8 +4,8 @@
 
 **Planned.** qBittorrent runs beside **Gluetun** (ProtonVPN WireGuard) in one Pod, so
 all of qBittorrent's internet traffic egresses through the VPN or is dropped. The
-**kill switch is a hard, live-tested gate** (`plans/talos-media-stack.md` §176–188,
-§751–758, §871) — nothing is activated until the failure test passes on the cluster.
+**kill switch is a hard, live-tested gate** (see `plans/media-stack-architecture-plan.md`,
+"VPN kill switch") — nothing is activated until the failure test passes on the cluster.
 
 An expert review of the initial design was incorporated in full (6 corrections +
 credential simplification), verified against the Gluetun wiki. This doc records that
@@ -67,8 +67,8 @@ test (including a hard Gluetun-container kill) is mandatory, not assumed.
 
 qBittorrent enables **"Bypass authentication for clients on localhost"**
 (`WebUI\LocalHostAuth=false`) so only the in-pod Gluetun hook calls the API without
-creds; the WebUI still requires auth for LAN/Envoy/*arr (handoff §222 permits exactly
-this). First-run setting (or pre-seeded `qBittorrent.conf`).
+creds; the WebUI still requires auth for LAN/Envoy/*arr (the media-stack plan permits a
+documented localhost-only bypass). First-run setting (or pre-seeded `qBittorrent.conf`).
 
 ## Secrets
 
@@ -80,7 +80,7 @@ recipe-generated control-server **apikey** baked into the mounted `config.toml`.
 ## Kill-switch acceptance gate — BLOCKING (`qbittorrent-killswitch-verify`, operator-run)
 
 Not in `just ci`; Phase 12 is not flipped `suspend: false` / not "done" until it passes
-live (handoff §751–758, §871):
+live (the media-stack plan's kill-switch gate + Definition of Done):
 
 1. **Baseline up:** public IP (`/v1/publicip/ip`) == ProtonVPN ≠ home WAN; forwarded port
    active; qBittorrent listening on it.
