@@ -40,16 +40,42 @@ controllers:
           capabilities:
             drop: ["ALL"]
         probes:
+          # HTTP GET /identity (unauthenticated, returns 200) instead of the default
+          # TCP check: a hung Plex accepts TCP on 32400 while its HTTP API is dead, so
+          # TCP probes falsely report Ready. HTTP probes keep a broken Plex out of the
+          # Service (readiness) and auto-restart it (liveness).
           liveness:
             enabled: true
+            custom: true
+            spec:
+              httpGet:
+                path: /identity
+                port: 32400
+              # Lenient so it never kills Plex mid-transcode: ~3 min of failures first.
+              periodSeconds: 30
+              timeoutSeconds: 10
+              failureThreshold: 6
           readiness:
             enabled: true
+            custom: true
+            spec:
+              httpGet:
+                path: /identity
+                port: 32400
+              periodSeconds: 10
+              timeoutSeconds: 5
+              failureThreshold: 3
           startup:
             enabled: true
+            custom: true
             spec:
-              # Plex can take a while to come up on first boot / big libraries.
-              failureThreshold: 30
+              httpGet:
+                path: /identity
+                port: 32400
+              # Plex can take a while to come up on first boot / big libraries (5 min).
               periodSeconds: 10
+              timeoutSeconds: 5
+              failureThreshold: 30
 service:
   app:
     controller: plex
