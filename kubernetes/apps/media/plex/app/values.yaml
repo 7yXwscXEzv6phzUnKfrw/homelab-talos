@@ -70,4 +70,8 @@ persistence:
     type: persistentVolumeClaim
     existingClaim: media-data
     globalMounts:
-      - path: /data
+      # Mounted at /Volumes/Prometheus (the SMB share root) to match the paths the
+      # previous Mac-mini Plex used (/Volumes/Prometheus/media/{movies,tv}), so the
+      # migrated library database resolves with zero re-matching. Plex-specific; the
+      # later *arr apps mount this same share at /data.
+      - path: /Volumes/Prometheus
