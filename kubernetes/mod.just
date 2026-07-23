@@ -1472,7 +1472,62 @@ plex-reschedule-verify: require-bash
 
     [[ "$ready" == 'True' ]] || { echo "Plex did not become Ready on another node after reschedule (pod=$new_pod node=$new_node)." >&2; exit 1; }
     [[ "$new_node" != "$orig_node" ]] || { echo "Plex rescheduled onto the same node $orig_node; expected a different NUC." >&2; exit 1; }
-    echo "Phase 11 Plex reschedule gate passed: pod moved $orig_node -> $new_node, RWO config re-attached and SMB media re-mounted, Plex Ready."
+    echo "Phase 11 Plex reschedule gate passed: pod moved $orig_node -> $new_node, RWOP config re-attached and SMB media re-mounted, Plex Ready."
+
+# Validate the Phase 11 Intel GPU device plugin source: files, wiring, dependency,
+# pinned image, and the built DaemonSet manifest.
+intel-gpu-plugin-validate: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    base='kubernetes/apps/kube-system/intel-gpu-plugin'
+    ks="$base/ks.yaml"
+    ds="$base/app/daemonset.yaml"
+
+    for f in "$ks" "$ds" "$base/app/kustomization.yaml"; do
+      [[ -f "$f" ]] || { echo "Missing Phase 11 intel-gpu-plugin source: $f" >&2; exit 1; }
+    done
+
+    rg -qx '  - ./intel-gpu-plugin/ks.yaml' kubernetes/apps/kube-system/kustomization.yaml || {
+      echo 'Refusing: ./intel-gpu-plugin/ks.yaml is not wired into kubernetes/apps/kube-system/kustomization.yaml.' >&2
+      exit 1
+    }
+
+    suspend_state="$(yq -r '.spec.suspend // false' "$ks")"
+    [[ "$suspend_state" == 'true' || "$suspend_state" == 'false' ]]
+    [[ "$(yq -r '.spec.dependsOn[].name' "$ks")" == 'cilium' ]]
+
+    [[ "$(yq -r '.kind' "$ds")" == 'DaemonSet' ]]
+    [[ "$(yq -r '.metadata.namespace' "$ds")" == 'kube-system' ]]
+    image="$(yq -r '.spec.template.spec.containers[0].image' "$ds")"
+    [[ "$image" == intel/intel-gpu-plugin:* ]]
+    [[ "$image" != *:latest ]]
+
+    kustomize build "$base/app" >/dev/null
+
+    echo "intel-gpu-plugin ($image) source, wiring, dependency, and DaemonSet manifest passed validation."
+
+# Verify the live Phase 11 Intel GPU device plugin: Kustomization Ready, DaemonSet
+# rolled out, and every node advertising gpu.intel.com/i915 (QuickSync capacity).
+intel-gpu-plugin-verify: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    ns='kube-system'
+
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization intel-gpu-plugin --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || {
+      echo 'intel-gpu-plugin Kustomization is not Ready.' >&2
+      exit 1
+    }
+    kubectl --kubeconfig "$kubeconfig" --namespace "$ns" rollout status daemonset/intel-gpu-plugin --timeout=3m
+
+    advertised="$(kubectl --kubeconfig "$kubeconfig" get nodes --output json | yq -r '[.items[] | select(.status.allocatable["gpu.intel.com/i915"] != null)] | length')"
+    [[ "$advertised" -ge 1 ]] || {
+      echo 'No node advertises gpu.intel.com/i915 — check /dev/dri on the NUCs (the siderolabs/i915 extension) and the plugin logs.' >&2
+      exit 1
+    }
+    echo "Phase 11 intel-gpu-plugin acceptance passed: Kustomization Ready, DaemonSet rolled out, $advertised node(s) advertise gpu.intel.com/i915."
 
 # Validate the Phase 10 monitoring source: files, encrypted Grafana Secret,
 # dependency graph, staged-suspend uniformity, key values, wiring, HTTPRoutes,

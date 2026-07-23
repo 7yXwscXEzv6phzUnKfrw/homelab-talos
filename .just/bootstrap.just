@@ -1225,6 +1225,71 @@ plex:
     bootstrap_complete=true
     echo 'Phase 11 Plex live acceptance passed. Set suspend=false in Git, commit, push, and rerun just kube plex-verify. Then do the node-failure reschedule test in docs/phase-11-media.md.'
 
+# Reconcile the suspended Phase 11 Intel GPU device plugin after guarded checks, then
+# verify. Deploy + activate this BEFORE adding the gpu.intel.com/i915 request to Plex
+# (requesting a resource that is not yet advertised would leave Plex pod Pending). On
+# failure the resumed Kustomization is re-suspended while its resources are preserved.
+intel-gpu-plugin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    owner='7yXwscXEzv6phzUnKfrw'
+    repository='homelab-talos'
+    expected_origin="https://github.com/${owner}/${repository}.git"
+    expected_confirmation='bootstrap:phase11:intel-gpu-plugin'
+    ks='kubernetes/apps/kube-system/intel-gpu-plugin/ks.yaml'
+    resumed=false
+    bootstrap_complete=false
+    cleanup_gpu() {
+      if [[ "$bootstrap_complete" != 'true' && "$resumed" == 'true' ]]; then
+        echo 'Phase 11 intel-gpu-plugin did not pass; suspending it while preserving its resources.' >&2
+        flux suspend kustomization intel-gpu-plugin --namespace flux-system --kubeconfig "$kubeconfig" >/dev/null 2>&1 || true
+      fi
+    }
+    trap cleanup_gpu EXIT
+
+    [[ -f "$kubeconfig" ]] || { echo 'Missing ignored kubeconfig.' >&2; exit 1; }
+    [[ "$(git branch --show-current)" == 'main' ]]
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo 'Refusing intel-gpu-plugin bootstrap: commit and push the reviewed suspended source first.' >&2
+      exit 1
+    }
+    [[ "$(git remote get-url origin)" == "$expected_origin" ]]
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    [[ "$remote_head" == "$(git rev-parse HEAD)" ]] || {
+      echo 'Refusing intel-gpu-plugin bootstrap: local HEAD and origin/main differ.' >&2
+      exit 1
+    }
+    [[ "$(yq -r '.spec.suspend' "$ks")" == 'true' ]] || {
+      echo 'Refusing intel-gpu-plugin bootstrap: it must be staged suspended in Git.' >&2
+      exit 1
+    }
+
+    just kube intel-gpu-plugin-validate
+    flux reconcile source git flux-system --kubeconfig "$kubeconfig"
+    just kube flux-verify
+    flux reconcile kustomization cluster-apps --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization intel-gpu-plugin --output jsonpath='{.spec.suspend}')" == 'true' ]] || {
+      echo 'Refusing intel-gpu-plugin bootstrap: it is not suspended in the live cluster.' >&2
+      exit 1
+    }
+
+    [[ "${INTEL_GPU_PLUGIN_BOOTSTRAP_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to reconcile the Phase 11 Intel GPU device plugin.' >&2
+      echo "Set INTEL_GPU_PLUGIN_BOOTSTRAP_CONFIRM='$expected_confirmation' after reviewing intel-gpu-plugin-validate." >&2
+      exit 1
+    }
+
+    resumed=true
+    flux resume kustomization intel-gpu-plugin --namespace flux-system --kubeconfig "$kubeconfig"
+    flux reconcile kustomization intel-gpu-plugin --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait --for=condition=Ready kustomization/intel-gpu-plugin --timeout=10m
+
+    just kube intel-gpu-plugin-verify
+    bootstrap_complete=true
+    echo 'Phase 11 intel-gpu-plugin live acceptance passed. Set suspend=false in Git, commit, push. THEN add the gpu.intel.com/i915 request to Plex (PR 11-3b) and confirm HW transcode.'
+
 # Reconcile the suspended Phase 10 monitoring stack (kube-prometheus-stack) after
 # guarded checks, in dependency order, then verify. Flux decrypts the Grafana
 # Secret in-cluster, so this needs no operator SOPS key. On failure the resumed
