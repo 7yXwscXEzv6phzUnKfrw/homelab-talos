@@ -2,8 +2,9 @@
 # single-instance — no active-active), Recreate strategy on a Longhorn RWO config
 # volume so a node failure reschedules cleanly instead of deadlocking on the PVC.
 # Media is the shared RWX SMB PVC (media-data) mounted at /data; transcode scratch is
-# a node-local emptyDir, never the NAS. Software transcode for now; hardware
-# transcode (Intel QuickSync via /dev/dri) lands in the follow-up PR.
+# a node-local emptyDir, never the NAS. Hardware transcode via Intel QuickSync: the
+# gpu.intel.com/i915 request (below) makes the intel-gpu-plugin inject /dev/dri, and
+# also targets Plex to a GPU-capable NUC (all three qualify).
 controllers:
   plex:
     type: deployment
@@ -27,8 +28,13 @@ controllers:
           requests:
             cpu: 100m
             memory: 512Mi
+            gpu.intel.com/i915: 1
           limits:
             memory: 4Gi
+            # Intel QuickSync. The plugin injects /dev/dri owned by the runtime user
+            # (568), so no supplementalGroups are needed. request==limit is required
+            # for extended (device) resources.
+            gpu.intel.com/i915: 1
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
