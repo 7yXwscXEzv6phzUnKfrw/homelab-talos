@@ -65,9 +65,12 @@ config volume, and Plex starts and checks its database.
 
 - `kubernetes/apps/media/plex/` — app-template HelmRelease, single Plex container
   (pinned image), config PVC on Longhorn (**ReadWriteOncePod**) with `strategy:
-  Recreate`, media from the shared `media-data` RWX PVC at `/data`, transcode scratch on
-  a node-local `emptyDir` (never the NAS). A 120s termination grace period lets Plex
-  close its SQLite DB cleanly on planned drains.
+  Recreate`, media from the shared `media-data` RWX PVC mounted at `/Volumes/Prometheus`
+  (the SMB share root — matches the paths the previous Mac-mini Plex recorded,
+  `/Volumes/Prometheus/media/{movies,tv}`, so a migrated library database resolves with
+  zero re-matching; the later *arr apps mount this same share at `/data`), transcode
+  scratch on a node-local `emptyDir` (never the NAS). A 120s termination grace period
+  lets Plex close its SQLite DB cleanly on planned drains.
 - Exposed at `plex.lab.supermorphic.com` through the internal Envoy gateway only,
   LAN-only; remote/public streaming deferred. **No MetalLB LoadBalancer / no direct
   `:32400` LAN IP** — so local GDM auto-discovery does not work; clients connect via the
