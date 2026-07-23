@@ -1,5 +1,19 @@
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+namespace: monitoring
 resources:
   - ./httproutes.yaml
+# The Grafana sidecar watches every namespace for ConfigMaps labeled
+# grafana_dashboard=1 and auto-provisions them. This ships the community Trivy
+# Operator vulnerability dashboard (grafana.com/dashboards/16337) so image/config
+# scan results have a UI. Its panels resolve the built-in "datasource" template
+# variable (auto-selects the default Prometheus datasource), so no datasource
+# substitution is needed.
+configMapGenerator:
+  - name: trivy-operator-dashboard
+    files:
+      - dashboards/trivy-operator.json
+    options:
+      labels:
+        grafana_dashboard: "1"
