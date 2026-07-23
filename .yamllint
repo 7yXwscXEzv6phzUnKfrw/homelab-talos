@@ -1,0 +1,17 @@
+---
+# Kubernetes/Helm/SOPS-friendly. Advisory-noise rules are disabled; syntax and
+# structural rules stay on. Required CI is deterministic (yamllint runs --strict).
+extends: default
+
+rules:
+  document-start: disable
+  line-length: disable
+  comments-indentation: disable
+  comments:
+    min-spaces-from-content: 1
+  braces: disable
+  brackets: disable
+  truthy:
+    check-keys: false
+  indentation:
+    indent-sequences: consistent

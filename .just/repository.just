@@ -475,6 +475,15 @@ verify: verify-files
 # for a failed bare [[ ]] or (( )) mid-recipe, so validation assertions would
 # silently not gate. Recipes use #!/usr/bin/env bash, so a bash >= 4 earlier in
 # PATH (for example brew install bash) is what makes the guards effective.
+# Install the git pre-commit hooks into .git/hooks (idempotent).
+hooks:
+    pre-commit install
+
+# Run every pre-commit hook against the whole tree. Fails if a hook fails or would
+# modify a file. Folded into `just ci` for local fast feedback and CI.
+lint:
+    pre-commit run --all-files --show-diff-on-failure
+
 [private]
 require-bash:
     #!/usr/bin/env bash
