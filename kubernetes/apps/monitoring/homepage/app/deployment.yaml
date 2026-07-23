@@ -42,6 +42,13 @@ spec:
                   name: homepage-secrets
                   key: grafana-password
                   optional: true
+            # Plex widget token (optional: widget blank until the Secret has it).
+            - name: HOMEPAGE_VAR_PLEX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: homepage-secrets
+                  key: plex-token
+                  optional: true
           resources:
             requests:
               cpu: 25m
