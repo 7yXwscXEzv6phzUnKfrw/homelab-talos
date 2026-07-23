@@ -26,6 +26,7 @@ ci:
     just repo verify
     just kube kubeconform
     just kube cilium-validate
+    just kube metrics-server-validate
     just kube flux-validate
     just kube foundation-validate
     just kube storage-validate

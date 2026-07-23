@@ -1,0 +1,15 @@
+# Talos kubelet serving certs are self-signed (not signed by the cluster CA), so
+# metrics-server must skip TLS verification of the kubelet. This is acceptable on
+# this internal LAN cluster; the alternative is enabling Talos
+# rotate-server-certificates + the serving-cert approver, which needs a machine-
+# config change on every node. --kubelet-preferred-address-types stays at the chart
+# default (InternalIP,ExternalIP,Hostname).
+args:
+  - --kubelet-insecure-tls
+replicas: 1
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
