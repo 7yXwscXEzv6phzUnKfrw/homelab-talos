@@ -19,6 +19,9 @@ ingress:
 gateway:
   enabled: false
 config:
+  # Serve the Prometheus /metrics endpoint the chart's ServiceMonitor scrapes
+  # (without this, /metrics 404s and the gatus target shows down in Prometheus).
+  metrics: true
   storage:
     type: memory
   ui:
