@@ -13,6 +13,12 @@ defaultSettings:
   # settings; the backup target is now a BackupTarget CR (config/backup-target.yaml).
   snapshotDataIntegrity: enabled
   backupCompressionMethod: gzip
+  # Auto-failover for single-replica RWO/RWOP workloads on a HARD node-down: when a
+  # node is unreachable, Longhorn force-deletes its stuck pods so Kubernetes can
+  # reschedule them onto a healthy node and re-attach the volume from a surviving
+  # replica. Without this (default "do-nothing") a powered-off node leaves e.g. Plex
+  # stuck Terminating and it never recreates. Verified via the Phase-11 node-down test.
+  nodeDownPodDeletionPolicy: delete-both-statefulset-and-deployment-pod
 metrics:
   # No Prometheus Operator until Phase 10; enable the ServiceMonitor then.
   serviceMonitor:
