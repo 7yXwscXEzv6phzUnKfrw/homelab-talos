@@ -1,0 +1,131 @@
+# qBittorrent behind Gluetun (ProtonVPN WireGuard) in one Pod. All of qBittorrent's
+# internet traffic egresses through the VPN or is dropped (Gluetun firewall kill switch).
+# Gluetun is a native sidecar (restartPolicy: Always) with a startup probe on its control
+# server, so qBittorrent only starts after the tunnel+firewall are up (fail-closed at
+# boot). Only Gluetun holds NET_ADMIN + /dev/net/tun; qBittorrent cannot alter routes.
+# See docs/phase-12-media.md.
+controllers:
+  qbittorrent:
+    type: deployment
+    strategy: Recreate
+    pod:
+      securityContext:
+        fsGroup: 568
+        fsGroupChangePolicy: OnRootMismatch
+    initContainers:
+      # Native sidecar: restartPolicy Always + a startup probe gate qBittorrent.
+      gluetun:
+        image:
+          repository: ghcr.io/qdm12/gluetun
+          tag: v3.41.1
+        restartPolicy: Always
+        env:
+          VPN_SERVICE_PROVIDER: protonvpn
+          VPN_TYPE: wireguard
+          # Auto-selects a port-forwarding-capable P2P server; no server pin needed.
+          VPN_PORT_FORWARDING: "on"
+          PORT_FORWARD_ONLY: "on"
+          # Allow the WebUI in via the Pod interface (Service/Envoy/*arr/probes).
+          FIREWALL_INPUT_PORTS: "8080"
+          # FIREWALL_OUTBOUND_SUBNETS left unset on purpose — Cilium DNATs Service->Pod
+          # before Gluetun's egress firewall, so at most the pod CIDR is ever needed.
+          # Add it only if a required flow proves necessary (watch the firewall logs).
+          # Control server auth: no-auth health role + apikey for mutating routes.
+          HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH: /gluetun/auth/config.toml
+          WIREGUARD_PRIVATE_KEY:
+            valueFrom:
+              secretKeyRef:
+                name: protonvpn
+                key: WIREGUARD_PRIVATE_KEY
+          # ProtonVPN forwarded port -> qBittorrent listen port on each (re)connect.
+          # DOWN resets it first (qBittorrent reconnect bug). Gluetun's {{PORT}} and
+          # {{VPN_INTERFACE}} (=tun0) are escaped as {{ "{{PORT}}" }} so app-template's
+          # Helm `tpl` pass emits them literally for Gluetun to substitute at runtime.
+          # Uses qBittorrent's localhost-auth bypass — no credentials for the in-pod call.
+          VPN_PORT_FORWARDING_UP_COMMAND: |-
+            /bin/sh -c 'wget -O- -nv --retry-connrefused --post-data "json={\"listen_port\":{{ "{{PORT}}" }},\"current_network_interface\":\"{{ "{{VPN_INTERFACE}}" }}\",\"random_port\":false,\"upnp\":false}" http://127.0.0.1:8080/api/v2/app/setPreferences'
+          VPN_PORT_FORWARDING_DOWN_COMMAND: |-
+            /bin/sh -c 'wget -O- -nv --retry-connrefused --post-data "json={\"listen_port\":0,\"current_network_interface\":\"lo\"}" http://127.0.0.1:8080/api/v2/app/setPreferences'
+        securityContext:
+          capabilities:
+            add: ["NET_ADMIN"]
+        probes:
+          startup:
+            enabled: true
+            custom: true
+            spec:
+              httpGet:
+                path: /v1/vpn/status
+                port: 8000
+              # Up to 5 min for the tunnel + firewall to come up.
+              periodSeconds: 5
+              failureThreshold: 60
+          liveness: { enabled: false }
+          readiness: { enabled: false }
+    containers:
+      app:
+        image:
+          repository: ghcr.io/home-operations/qbittorrent
+          tag: 5.2.3
+        env:
+          TZ: America/Denver
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsUser: 568
+          runAsGroup: 568
+          capabilities:
+            drop: ["ALL"]
+        probes:
+          readiness:
+            enabled: true
+            custom: true
+            spec:
+              httpGet:
+                path: /api/v2/app/version
+                port: 8080
+              periodSeconds: 10
+              failureThreshold: 3
+          liveness: { enabled: false }
+          startup: { enabled: false }
+service:
+  app:
+    controller: qbittorrent
+    ports:
+      http:
+        port: 8080
+persistence:
+  config:
+    type: persistentVolumeClaim
+    accessMode: ReadWriteOnce
+    size: 5Gi
+    storageClass: longhorn
+    # Survive a full app teardown (like Plex's config).
+    annotations:
+      helm.sh/resource-policy: keep
+    advancedMounts:
+      qbittorrent:
+        app:
+          - path: /config
+  data:
+    type: persistentVolumeClaim
+    existingClaim: media-data
+    advancedMounts:
+      qbittorrent:
+        app:
+          - path: /data
+  tun:
+    type: hostPath
+    hostPath: /dev/net/tun
+    hostPathType: CharDevice
+    advancedMounts:
+      qbittorrent:
+        gluetun:
+          - path: /dev/net/tun
+  gluetun-auth:
+    type: secret
+    name: protonvpn
+    advancedMounts:
+      qbittorrent:
+        gluetun:
+          - path: /gluetun/auth/config.toml
+            subPath: config.toml
