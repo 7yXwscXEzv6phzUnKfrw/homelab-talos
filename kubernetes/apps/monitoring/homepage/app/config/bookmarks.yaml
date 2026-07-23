@@ -6,9 +6,6 @@
     - Homelab Playbook:
         - href: https://github.com/ksiggins/homelab-playbook
           icon: github-light.svg
-    - Homelab GitOps:
-        - href: https://github.com/ksiggins/homelab-gitops
-          icon: github-light.svg
     - Dashboard Icons:
         - href: https://github.com/homarr-labs/dashboard-icons
           icon: github-light.svg

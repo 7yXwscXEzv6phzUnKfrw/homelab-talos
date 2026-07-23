@@ -54,8 +54,11 @@ tags pinned. UIs are exposed only through the `internal` Envoy Gateway
 
 ### Acceptance evidence — hardlink proof
 
-<!-- TODO: record `ln` + `stat -c %h`/inode evidence showing a file moved between
-     /data/downloads and /data/media becomes a hardlink (Phase-9 deferred step 10). -->
+**Evidence (2026-07-23):** a guarded Job mounted the `media-data` PVC, created a file
+under `/data/downloads` and hardlinked it into `/data/media`; both paths reported the
+**same inode (927) with link count 2** — the UNAS SMB share + mount options preserve
+hardlinks across the `downloads`↔`media` subtrees. Phase-13 *arr imports will hardlink,
+not copy.
 
 ## Plex
 
@@ -110,11 +113,11 @@ re-mounting.
   running Plex, deletes the pod, waits for it to come back **Ready on a different
   node**, then uncordons. This exercises the config re-attach + SMB re-mount + Recreate
   path without a full outage.
-- **Full node-down form:** power off / reboot the node running Plex and confirm the pod
-  reschedules once Longhorn releases the config volume (its node-down timeout). If the
-  replacement pod stays Pending, tune Longhorn's node-down pod-deletion policy; if it is
-  stuck specifically on the old pod's `ReadWriteOncePod` claim, force-delete the old pod
-  (or revert `/config` to `ReadWriteOnce`).
+- **Full node-down form:** power off the node running Plex and confirm the pod
+  reschedules automatically. This requires Longhorn `nodeDownPodDeletionPolicy=
+  delete-both-statefulset-and-deployment-pod` (set in the Longhorn values) — the default
+  `do-nothing` leaves the pod stuck `Terminating` (RWOP blocks the replacement) and it
+  never recreates.
 
 Full acceptance test matrix to record before calling Phase 11 done:
 
@@ -126,14 +129,24 @@ Full acceptance test matrix to record before calling Phase 11 done:
 | SMB/NAS outage | `/config` DB stays healthy; media returns when the share is back; library not trashed |
 | Longhorn restore | Restore the `/config` backup into a throwaway PVC and start an isolated Plex against it |
 
-**Evidence (2026-07-23):** `just kube plex-reschedule-verify` passed — pod moved
-`nuc2 -> nuc1`, the RWOP config volume re-attached and the SMB media re-mounted, and
-Plex returned Ready. This is the Phase-11 core milestone (single replica recreates on
-another NUC). The Plex bootstrap's `plex-verify` also passed (Kustomization + HelmRelease
-Ready, rollout complete, HTTPRoute Accepted, Pi-hole DNS, `/identity` over TLS).
+**Evidence — graceful (2026-07-23):** `just kube plex-reschedule-verify` passed — pod
+moved `nuc2 -> nuc1`, the RWOP config volume re-attached, SMB media re-mounted, Plex
+Ready. `plex-verify` also passed (Kustomization + HelmRelease Ready, rollout, HTTPRoute
+Accepted, Pi-hole DNS, `/identity` over TLS).
 
-<!-- TODO (remaining, when convenient): hard node-down RTO measurement, one-replica-loss
-     check, SMB-outage behavior, and a Longhorn restore-into-new-PVC test. -->
+**Evidence — hard node-down (2026-07-23):** nuc2 (running Plex) was **physically powered
+off**. With `nodeDownPodDeletionPolicy=delete-both-…` set, Longhorn force-deleted the
+stuck pod (~235 s), Kubernetes rescheduled Plex onto **nuc1**, the RWOP config volume
+re-attached from the surviving nuc1 replica, and `/identity` returned 200 — **RTO ≈ 8 min,
+fully automatic, no manual intervention.** Library intact (same `machineIdentifier`
+`c71409d6…`, `claimed=1` → the migrated config volume, not a fresh one). After nuc2 was
+powered back on it rejoined `Ready` and Longhorn rebuilt the nuc2 replica → `robustness=
+healthy` (2 replicas). RTO is on the high end (dominated by the 300 s
+`node.kubernetes.io/unreachable` toleration); lower that toleration on the pod if faster
+recovery is ever wanted.
+
+<!-- TODO (optional, deferred): one-replica-loss check, SMB-outage behavior, and a
+     Longhorn restore-into-new-PVC test. -->
 
 ## Plex hardware transcoding (Intel QuickSync)
 

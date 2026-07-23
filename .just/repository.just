@@ -501,13 +501,17 @@ homepage-secrets:
       echo 'Set GRAFANA_ADMIN_PASSWORD to that Grafana admin password.' >&2
       exit 1
     }
+    [[ -n "${PLEX_TOKEN:-}" ]] || {
+      echo 'Set PLEX_TOKEN to a Plex server token (X-Plex-Token) for the Homepage Plex widget.' >&2
+      exit 1
+    }
     [[ "${HOMEPAGE_SECRETS_CONFIRM:-}" == "$expected_confirmation" ]] || {
       echo 'Refusing to write the Homepage Secret.' >&2
       echo "Set HOMEPAGE_SECRETS_CONFIRM='$expected_confirmation' after reviewing the target." >&2
       exit 1
     }
 
-    export GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD
+    export GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD PLEX_TOKEN
     yq -n \
       '.apiVersion = "v1" |
        .kind = "Secret" |
@@ -515,7 +519,8 @@ homepage-secrets:
        .metadata.namespace = "homepage" |
        .type = "Opaque" |
        .stringData."grafana-user" = strenv(GRAFANA_ADMIN_USER) |
-       .stringData."grafana-password" = strenv(GRAFANA_ADMIN_PASSWORD)' \
+       .stringData."grafana-password" = strenv(GRAFANA_ADMIN_PASSWORD) |
+       .stringData."plex-token" = strenv(PLEX_TOKEN)' \
       >"$temp_dir/homepage-secrets.yaml"
 
     sops --encrypt --filename-override "$target" \
@@ -523,6 +528,7 @@ homepage-secrets:
     [[ "$(sops filestatus "$temp_dir/homepage-secrets.sops.yaml" | yq -r '.encrypted')" == 'true' ]]
     [[ "$(yq -r '.sops.age[].recipient' "$temp_dir/homepage-secrets.sops.yaml" | sort -u)" == "$(yq -r '.creation_rules[1].age' .sops.yaml)" ]]
     ! rg -Fq -- "$GRAFANA_ADMIN_PASSWORD" "$temp_dir/homepage-secrets.sops.yaml"
+    ! rg -Fq -- "$PLEX_TOKEN" "$temp_dir/homepage-secrets.sops.yaml"
 
     mv -- "$temp_dir/homepage-secrets.sops.yaml" "$target"
     echo "Wrote SOPS-encrypted $target (homepage-secrets in homepage). Then wire it into the homepage kustomization."

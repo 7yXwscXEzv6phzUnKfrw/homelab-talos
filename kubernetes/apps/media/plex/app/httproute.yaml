@@ -9,9 +9,18 @@ metadata:
     external-dns.k8s.io/audience: internal
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: "Plex"
+    gethomepage.dev/description: "Media server"
+    gethomepage.dev/pod-selector: "app.kubernetes.io/name=plex"
     gethomepage.dev/group: "Media"
     gethomepage.dev/icon: "plex.svg"
     gethomepage.dev/href: "https://plex.lab.supermorphic.com"
+    # Live Plex widget. Token injected from the homepage-secrets Secret via
+    # HOMEPAGE_VAR (never cleartext); widget stays blank until the operator adds it.
+    # Albums intentionally omitted (allowed: streams, albums, movies, tv).
+    gethomepage.dev/widget.type: "plex"
+    gethomepage.dev/widget.url: "http://plex.media.svc.cluster.local:32400"
+    gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_PLEX_TOKEN}}"
+    gethomepage.dev/widget.fields: '["movies","tv","streams"]'
 spec:
   hostnames:
     - plex.lab.supermorphic.com
