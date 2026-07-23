@@ -182,6 +182,65 @@ cilium-postflight:
 
 # Fail unless running under bash >= 4; macOS /bin/bash 3.2 does not honor set -e
 # for a failed bare [[ ]] mid-recipe, so these acceptance assertions would not gate.
+# Validate the metrics-server source: files, wiring, dependency, pinned chart, the
+# Talos --kubelet-insecure-tls flag, and the render (version derived from the HR).
+metrics-server-validate: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    base='kubernetes/apps/kube-system/metrics-server'
+    ks="$base/ks.yaml"
+    hr="$base/app/helmrelease.yaml"
+    repo="$base/app/helmrepository.yaml"
+    values="$base/app/values.yaml"
+    temp_dir="$(mktemp -d /tmp/homelab-talos-metrics-server-validate.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+
+    for f in "$ks" "$hr" "$repo" "$values" "$base/app/kustomization.yaml"; do
+      [[ -f "$f" ]] || { echo "Missing metrics-server source: $f" >&2; exit 1; }
+    done
+    rg -qx '  - ./metrics-server/ks.yaml' kubernetes/apps/kube-system/kustomization.yaml || {
+      echo 'Refusing: ./metrics-server/ks.yaml is not wired into the kube-system kustomization.' >&2
+      exit 1
+    }
+    suspend_state="$(yq -r '.spec.suspend // false' "$ks")"
+    [[ "$suspend_state" == 'true' || "$suspend_state" == 'false' ]]
+    [[ "$(yq ea -r '[.spec.dependsOn[].name] | join(",")' "$ks")" == 'cilium' ]]
+    [[ "$(yq -r '.spec.url' "$repo")" == 'https://kubernetes-sigs.github.io/metrics-server' ]]
+    [[ -n "$(yq -r '.args[] | select(. == "--kubelet-insecure-tls")' "$values")" ]]
+    chart_version="$(yq -r '.spec.chart.spec.version' "$hr")"
+    [[ -n "$chart_version" && "$chart_version" != 'null' ]]
+
+    kustomize build "$base/app" >/dev/null
+    printf 'apiVersion: v1\ngenerated: null\nrepositories: []\n' >"$temp_dir/repos.yaml"
+    HELM_REPOSITORY_CONFIG="$temp_dir/repos.yaml" HELM_REPOSITORY_CACHE="$temp_dir/cache" \
+      helm template metrics-server metrics-server --repo https://kubernetes-sigs.github.io/metrics-server --version "$chart_version" --namespace kube-system --values "$values" >/dev/null
+
+    echo 'metrics-server source, wiring, dependency, insecure-tls flag, and pinned render passed validation.'
+
+# Verify metrics-server: Kustomization + HelmRelease Ready, deployment rolled out,
+# the metrics.k8s.io APIService Available, and kubectl top returns data.
+metrics-server-verify: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization metrics-server --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || { echo 'metrics-server Kustomization is not Ready.' >&2; exit 1; }
+    kubectl --kubeconfig "$kubeconfig" --namespace kube-system rollout status deployment/metrics-server --timeout=5m
+
+    avail=false
+    for _ in {1..24}; do
+      if [[ "$(kubectl --kubeconfig "$kubeconfig" get apiservice v1beta1.metrics.k8s.io --output jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null)" == 'True' ]]; then
+        avail=true
+        break
+      fi
+      sleep 5
+    done
+    [[ "$avail" == 'true' ]] || { echo 'The metrics.k8s.io APIService is not Available.' >&2; exit 1; }
+    kubectl --kubeconfig "$kubeconfig" top nodes >/dev/null 2>&1 || { echo 'kubectl top nodes did not return metrics.' >&2; exit 1; }
+
+    echo 'metrics-server acceptance passed: deployment ready, metrics.k8s.io Available, and kubectl top nodes returns data.'
+
 # Validate the built app manifests against Kubernetes + CRD schemas, offline of the
 # cluster (schemas are fetched over HTTPS). Secrets are kept (only the SOPS metadata
 # is stripped); CRDs absent from the schema sources are reported as skipped, not

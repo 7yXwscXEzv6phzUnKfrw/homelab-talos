@@ -201,6 +201,9 @@ available for focused developer validation.
 | `just repo lint` | Run all pre-commit hooks against the tree | — | Available |
 | `just kube kubeconform` | Validate the built app manifests against Kubernetes + CRD schemas | — | Available; read-only, fetches schemas over HTTPS |
 | `just kube foundation-ca-expiry` | Warn if the committed Pi-hole CA is within 30 days of expiry | — | Operational; time-based, kept out of `just ci` |
+| `just kube metrics-server-validate` | Validate the metrics-server source, insecure-TLS flag, and pinned render | — | Available; read-only |
+| `just bootstrap metrics-server` | Reconcile the staged metrics-server and verify (`kubectl top`, HPA, Homepage widget) | `METRICS_SERVER_BOOTSTRAP_CONFIRM` | Mutating after confirmation |
+| `just kube metrics-server-verify` | Verify metrics-server: APIService Available and `kubectl top nodes` returns data | — | Read-only |
 
 The **Requires from operator** column lists inputs the recipe reads from your
 environment and refuses to run without. `SOPS_AGE_KEY`[`_FILE`] means either the

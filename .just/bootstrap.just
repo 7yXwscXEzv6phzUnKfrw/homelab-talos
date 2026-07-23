@@ -1304,6 +1304,72 @@ trivy:
     bootstrap_complete=true
     echo 'Phase 10 Trivy Operator live acceptance passed. Change the Trivy Git source to suspend=false, commit, push, and rerun just kube trivy-verify.'
 
+# Reconcile the suspended metrics-server (enables kubectl top / HPA / the Homepage
+# Kubernetes widget). On failure the resumed Kustomization is re-suspended.
+metrics-server:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    owner='7yXwscXEzv6phzUnKfrw'
+    repository='homelab-talos'
+    expected_origin="https://github.com/${owner}/${repository}.git"
+    expected_confirmation='bootstrap:metrics-server'
+    ks='kubernetes/apps/kube-system/metrics-server/ks.yaml'
+    resumed=false
+    bootstrap_complete=false
+    cleanup_metrics_server() {
+      if [[ "$bootstrap_complete" != 'true' && "$resumed" == 'true' ]]; then
+        echo 'metrics-server did not pass; suspending the attempted Kustomization while preserving its resources.' >&2
+        flux suspend kustomization metrics-server --namespace flux-system --kubeconfig "$kubeconfig" >/dev/null 2>&1 || true
+      fi
+    }
+    trap cleanup_metrics_server EXIT
+
+    [[ -f "$kubeconfig" ]] || { echo 'Missing ignored kubeconfig.' >&2; exit 1; }
+    [[ "$(git branch --show-current)" == 'main' ]]
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo 'Refusing metrics-server bootstrap: commit and push the reviewed suspended source first.' >&2
+      exit 1
+    }
+    [[ "$(git remote get-url origin)" == "$expected_origin" ]]
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    [[ "$remote_head" == "$(git rev-parse HEAD)" ]] || {
+      echo 'Refusing metrics-server bootstrap: local HEAD and origin/main differ.' >&2
+      exit 1
+    }
+    [[ "$(yq -r '.spec.suspend' "$ks")" == 'true' ]] || {
+      echo 'Refusing metrics-server bootstrap: the Kustomization must be staged suspended in Git.' >&2
+      exit 1
+    }
+
+    just kube metrics-server-validate
+    just kube flux-verify
+    flux reconcile kustomization cluster-apps \
+      --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization metrics-server --output jsonpath='{.spec.suspend}')" == 'true' ]] || {
+      echo 'Refusing metrics-server bootstrap: metrics-server is not suspended in the live cluster.' >&2
+      exit 1
+    }
+
+    [[ "${METRICS_SERVER_BOOTSTRAP_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to reconcile metrics-server.' >&2
+      echo "Set METRICS_SERVER_BOOTSTRAP_CONFIRM='$expected_confirmation' after reviewing metrics-server-validate." >&2
+      exit 1
+    }
+
+    echo 'Reconciling metrics-server Kustomization.'
+    resumed=true
+    flux resume kustomization metrics-server --namespace flux-system --kubeconfig "$kubeconfig"
+    flux reconcile kustomization metrics-server \
+      --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 15m
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait \
+      --for=condition=Ready kustomization/metrics-server --timeout=15m
+
+    just kube metrics-server-verify
+    bootstrap_complete=true
+    echo 'metrics-server live acceptance passed. Change the Git source to suspend=false, commit, push, and rerun just kube metrics-server-verify.'
+
 # Guard, reboot one node, and require full recovery before returning. Refuses
 # unless the cluster is already healthy so a rolling reboot never removes a second
 # node while another is degraded. Reused for Phase 8 soak and day-two maintenance.
