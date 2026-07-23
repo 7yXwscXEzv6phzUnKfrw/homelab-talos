@@ -9,6 +9,7 @@ metadata:
     external-dns.k8s.io/audience: internal
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: "Plex"
+    gethomepage.dev/description: "Media server"
     gethomepage.dev/group: "Media"
     gethomepage.dev/icon: "plex.svg"
     gethomepage.dev/href: "https://plex.lab.supermorphic.com"

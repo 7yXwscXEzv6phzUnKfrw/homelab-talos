@@ -63,6 +63,14 @@ config:
       interval: 2m
       conditions:
         - "[STATUS] == 200"
+    # Media stack (black-box through the internal gateway). /identity is Plex's
+    # unauthenticated health endpoint — proves DNS -> gateway -> Plex is serving.
+    - name: plex
+      group: Media
+      url: "https://plex.lab.supermorphic.com/identity"
+      interval: 1m
+      conditions:
+        - "[STATUS] == 200"
     # External dependency cert-manager relies on for wildcard-cert renewal.
     - name: letsencrypt-acme
       group: External
