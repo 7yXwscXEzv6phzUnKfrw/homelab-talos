@@ -1208,6 +1208,63 @@ media-storage-validate: require-bash
 
     echo 'Phase 11 media storage source, encrypted SMB Secret, static RWX SMB PV/PVC, dependency graph, and wiring passed validation.'
 
+# Validate the Phase 11 Plex source: files, wiring, dependency, app-template chartRef,
+# values (Recreate + RWO config, shared media-data, emptyDir transcode), HTTPRoute,
+# and the pinned app-template render.
+plex-validate: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    base='kubernetes/apps/media/plex'
+    ks="$base/ks.yaml"
+    hr="$base/app/helmrelease.yaml"
+    values="$base/app/values.yaml"
+    route="$base/app/httproute.yaml"
+    oci='kubernetes/apps/media/namespace/app/ocirepository.yaml'
+    temp_dir="$(mktemp -d /tmp/homelab-talos-plex-validate.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+
+    for f in "$ks" "$hr" "$values" "$route" "$base/app/kustomization.yaml" "$oci"; do
+      [[ -f "$f" ]] || { echo "Missing Phase 11 Plex source: $f" >&2; exit 1; }
+    done
+
+    rg -qx '  - ./plex/ks.yaml' kubernetes/apps/media/kustomization.yaml || {
+      echo 'Refusing: ./plex/ks.yaml is not wired into kubernetes/apps/media/kustomization.yaml.' >&2
+      exit 1
+    }
+
+    suspend_state="$(yq -r '.spec.suspend // false' "$ks")"
+    [[ "$suspend_state" == 'true' || "$suspend_state" == 'false' ]]
+    [[ "$(yq -r '[.spec.dependsOn[].name] | sort | join(",")' "$ks")" == 'internal-gateway,media-storage' ]]
+
+    [[ "$(yq -r '.spec.chartRef.kind' "$hr")" == 'OCIRepository' ]]
+    [[ "$(yq -r '.spec.chartRef.name' "$hr")" == 'app-template' ]]
+
+    [[ "$(yq -r '.controllers.plex.type' "$values")" == 'deployment' ]]
+    [[ "$(yq -r '.controllers.plex.strategy' "$values")" == 'Recreate' ]]
+    [[ "$(yq -r '.controllers.plex.containers.app.image.repository' "$values")" == 'ghcr.io/home-operations/plex' ]]
+    image_tag="$(yq -r '.controllers.plex.containers.app.image.tag' "$values")"
+    [[ -n "$image_tag" && "$image_tag" != 'null' ]]
+    [[ "$(yq -r '.persistence.config.accessMode' "$values")" == 'ReadWriteOncePod' ]]
+    [[ "$(yq -r '.persistence.config.storageClass' "$values")" == 'longhorn' ]]
+    [[ "$(yq -r '.persistence.media.existingClaim' "$values")" == 'media-data' ]]
+    [[ "$(yq -r '.persistence.transcode.type' "$values")" == 'emptyDir' ]]
+
+    [[ "$(yq -r '.spec.hostnames[0]' "$route")" == 'plex.lab.supermorphic.com' ]]
+    [[ "$(yq -r '.spec.parentRefs[0].name' "$route")" == 'internal' ]]
+    [[ "$(yq -r '.spec.rules[0].backendRefs[0].port' "$route")" == '32400' ]]
+
+    chart_url="$(yq -r '.spec.url' "$oci")"
+    chart_tag="$(yq -r '.spec.ref.tag' "$oci")"
+
+    kustomize build "$base/app" >/dev/null
+
+    helm template plex "$chart_url" --version "$chart_tag" --namespace media --values "$values" >"$temp_dir/render.yaml"
+    [[ "$(yq -r 'select(.kind == "Deployment") | .metadata.name' "$temp_dir/render.yaml")" == 'plex' ]]
+    [[ "$(yq -r 'select(.kind == "Deployment") | .spec.strategy.type' "$temp_dir/render.yaml")" == 'Recreate' ]]
+
+    echo "Plex $image_tag source, app-template chartRef, values (Recreate/RWOP config, media-data, emptyDir transcode), HTTPRoute, and pinned render passed validation."
+
 # Verify the live Longhorn acceptance gate: controllers, node disks, default
 # StorageClass, backup target, recurring jobs, and a two-replica test PVC.
 storage-verify: require-bash
@@ -1328,6 +1385,94 @@ media-storage-verify: require-bash
       exit 1
     }
     echo 'Phase 11 media storage acceptance passed: media + media-storage Kustomizations Ready and media-data PVC Bound. Run the hardlink proof in docs/phase-11-media.md next.'
+
+# Verify the live Phase 11 Plex: Kustomization + HelmRelease Ready, rollout complete,
+# HTTPRoute Accepted, Pi-hole DNS, and /identity reachable over the internal gateway.
+# The node-failure reschedule gate is a manual operator test (docs/phase-11-media.md).
+plex-verify: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    ns='media'
+    gateway_ip='192.168.90.30'
+    host='plex.lab.supermorphic.com'
+
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization plex --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || {
+      echo 'plex Kustomization is not Ready.' >&2
+      exit 1
+    }
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get helmrelease plex --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || {
+      echo 'plex HelmRelease is not Ready.' >&2
+      exit 1
+    }
+    kubectl --kubeconfig "$kubeconfig" --namespace "$ns" rollout status deployment/plex --timeout=5m
+
+    accepted=false
+    for _ in {1..24}; do
+      if [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get httproute plex --output jsonpath='{.status.parents[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == 'True' ]]; then
+        accepted=true
+        break
+      fi
+      sleep 5
+    done
+    [[ "$accepted" == 'true' ]] || { echo 'plex HTTPRoute was not Accepted.' >&2; exit 1; }
+
+    [[ "$(dig +short @192.168.90.2 "$host" A | sort -u)" == "$gateway_ip" ]] || {
+      echo "DNS for $host does not resolve to $gateway_ip via Pi-hole." >&2
+      exit 1
+    }
+    curl --silent --fail --resolve "$host:443:$gateway_ip" "https://$host/identity" >/dev/null || {
+      echo "Plex /identity is not reachable via the internal gateway." >&2
+      exit 1
+    }
+    echo 'Phase 11 Plex acceptance passed: Kustomization + HelmRelease Ready, rollout complete, HTTPRoute Accepted, DNS resolves, /identity reachable over TLS. Run the node-failure reschedule test in docs/phase-11-media.md.'
+
+# The Phase 11 gate: prove the single Plex replica recreates on ANOTHER NUC when its
+# node becomes unschedulable, with the Longhorn RWO config volume re-attaching and the
+# SMB media re-mounting. Safe form (cordon + delete pod); the original node is always
+# uncordoned (trap). NOT in `just ci` — destructive, operator-run.
+plex-reschedule-verify: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    ns='media'
+    selector='app.kubernetes.io/name=plex'
+    cordoned=''
+    cleanup() {
+      if [[ -n "$cordoned" ]]; then
+        kubectl --kubeconfig "$kubeconfig" uncordon "$cordoned" >/dev/null 2>&1 || true
+      fi
+    }
+    trap cleanup EXIT
+
+    orig_pod="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get pod -l "$selector" --output jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+    [[ -n "$orig_pod" ]] || { echo 'No running Plex pod found.' >&2; exit 1; }
+    orig_node="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get pod "$orig_pod" --output jsonpath='{.spec.nodeName}')"
+    echo "Plex pod $orig_pod is on node $orig_node; cordoning it and deleting the pod to force a reschedule."
+
+    kubectl --kubeconfig "$kubeconfig" cordon "$orig_node"
+    cordoned="$orig_node"
+    kubectl --kubeconfig "$kubeconfig" --namespace "$ns" delete pod "$orig_pod" --wait=false
+
+    ready='False'; new_pod=''; new_node=''
+    for _ in {1..90}; do
+      new_pod="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get pod -l "$selector" --output jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+      if [[ -n "$new_pod" && "$new_pod" != "$orig_pod" ]]; then
+        ready="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get pod "$new_pod" --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo False)"
+        new_node="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get pod "$new_pod" --output jsonpath='{.spec.nodeName}' 2>/dev/null || true)"
+        [[ "$ready" == 'True' ]] && break
+      fi
+      sleep 10
+    done
+
+    kubectl --kubeconfig "$kubeconfig" uncordon "$orig_node"
+    cordoned=''
+
+    [[ "$ready" == 'True' ]] || { echo "Plex did not become Ready on another node after reschedule (pod=$new_pod node=$new_node)." >&2; exit 1; }
+    [[ "$new_node" != "$orig_node" ]] || { echo "Plex rescheduled onto the same node $orig_node; expected a different NUC." >&2; exit 1; }
+    echo "Phase 11 Plex reschedule gate passed: pod moved $orig_node -> $new_node, RWO config re-attached and SMB media re-mounted, Plex Ready."
 
 # Validate the Phase 10 monitoring source: files, encrypted Grafana Secret,
 # dependency graph, staged-suspend uniformity, key values, wiring, HTTPRoutes,

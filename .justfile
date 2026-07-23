@@ -32,6 +32,7 @@ ci:
     just kube storage-validate
     just kube csi-driver-smb-validate
     just kube media-storage-validate
+    just kube plex-validate
     just kube monitoring-validate
     just kube gatus-validate
     just kube homepage-validate

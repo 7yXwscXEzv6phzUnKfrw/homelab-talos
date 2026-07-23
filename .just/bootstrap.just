@@ -1161,6 +1161,70 @@ media-storage:
     bootstrap_complete=true
     echo 'Phase 11 media storage live acceptance passed. Set both suspend=false in Git, commit, push, and rerun just kube media-storage-verify. Then run the hardlink proof in docs/phase-11-media.md.'
 
+# Reconcile the suspended Phase 11 Plex after guarded checks, then verify. Requires
+# media-storage already bootstrapped (the shared media-data PVC). On failure the
+# resumed Kustomization is re-suspended while its resources are preserved.
+plex:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    owner='7yXwscXEzv6phzUnKfrw'
+    repository='homelab-talos'
+    expected_origin="https://github.com/${owner}/${repository}.git"
+    expected_confirmation='bootstrap:phase11:plex'
+    ks='kubernetes/apps/media/plex/ks.yaml'
+    resumed=false
+    bootstrap_complete=false
+    cleanup_plex() {
+      if [[ "$bootstrap_complete" != 'true' && "$resumed" == 'true' ]]; then
+        echo 'Phase 11 Plex did not pass; suspending it while preserving its resources.' >&2
+        flux suspend kustomization plex --namespace flux-system --kubeconfig "$kubeconfig" >/dev/null 2>&1 || true
+      fi
+    }
+    trap cleanup_plex EXIT
+
+    [[ -f "$kubeconfig" ]] || { echo 'Missing ignored kubeconfig.' >&2; exit 1; }
+    [[ "$(git branch --show-current)" == 'main' ]]
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo 'Refusing plex bootstrap: commit and push the reviewed suspended source first.' >&2
+      exit 1
+    }
+    [[ "$(git remote get-url origin)" == "$expected_origin" ]]
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    [[ "$remote_head" == "$(git rev-parse HEAD)" ]] || {
+      echo 'Refusing plex bootstrap: local HEAD and origin/main differ.' >&2
+      exit 1
+    }
+    [[ "$(yq -r '.spec.suspend' "$ks")" == 'true' ]] || {
+      echo 'Refusing plex bootstrap: it must be staged suspended in Git.' >&2
+      exit 1
+    }
+
+    just kube plex-validate
+    flux reconcile source git flux-system --kubeconfig "$kubeconfig"
+    just kube flux-verify
+    flux reconcile kustomization cluster-apps --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization plex --output jsonpath='{.spec.suspend}')" == 'true' ]] || {
+      echo 'Refusing plex bootstrap: it is not suspended in the live cluster.' >&2
+      exit 1
+    }
+
+    [[ "${PLEX_BOOTSTRAP_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to reconcile Phase 11 Plex.' >&2
+      echo "Set PLEX_BOOTSTRAP_CONFIRM='$expected_confirmation' after reviewing plex-validate." >&2
+      exit 1
+    }
+
+    resumed=true
+    flux resume kustomization plex --namespace flux-system --kubeconfig "$kubeconfig"
+    flux reconcile kustomization plex --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 15m
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait --for=condition=Ready kustomization/plex --timeout=15m
+
+    just kube plex-verify
+    bootstrap_complete=true
+    echo 'Phase 11 Plex live acceptance passed. Set suspend=false in Git, commit, push, and rerun just kube plex-verify. Then do the node-failure reschedule test in docs/phase-11-media.md.'
+
 # Reconcile the suspended Phase 10 monitoring stack (kube-prometheus-stack) after
 # guarded checks, in dependency order, then verify. Flux decrypts the Grafana
 # Secret in-cluster, so this needs no operator SOPS key. On failure the resumed

@@ -1,0 +1,73 @@
+# Plex Media Server via the bjw-s app-template chart. Single replica (Plex is
+# single-instance — no active-active), Recreate strategy on a Longhorn RWO config
+# volume so a node failure reschedules cleanly instead of deadlocking on the PVC.
+# Media is the shared RWX SMB PVC (media-data) mounted at /data; transcode scratch is
+# a node-local emptyDir, never the NAS. Software transcode for now; hardware
+# transcode (Intel QuickSync via /dev/dri) lands in the follow-up PR.
+controllers:
+  plex:
+    type: deployment
+    strategy: Recreate
+    pod:
+      # Give Plex time to close its SQLite database cleanly on a planned drain.
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsUser: 568
+        runAsGroup: 568
+        fsGroup: 568
+        fsGroupChangePolicy: OnRootMismatch
+    containers:
+      app:
+        image:
+          repository: ghcr.io/home-operations/plex
+          tag: 1.43.3.10828
+        env:
+          TZ: America/Denver
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            memory: 4Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        probes:
+          liveness:
+            enabled: true
+          readiness:
+            enabled: true
+          startup:
+            enabled: true
+            spec:
+              # Plex can take a while to come up on first boot / big libraries.
+              failureThreshold: 30
+              periodSeconds: 10
+service:
+  app:
+    controller: plex
+    type: ClusterIP
+    ports:
+      http:
+        port: 32400
+persistence:
+  config:
+    type: persistentVolumeClaim
+    # ReadWriteOncePod: strongest single-writer isolation for the Plex SQLite DB
+    # (only one pod cluster-wide may mount it RW). Falls back to ReadWriteOnce if a
+    # hard node-down ever leaves the replacement pod stuck on the old pod's claim.
+    accessMode: ReadWriteOncePod
+    size: 30Gi
+    storageClass: longhorn
+    globalMounts:
+      - path: /config
+  transcode:
+    type: emptyDir
+    globalMounts:
+      - path: /transcode
+  media:
+    type: persistentVolumeClaim
+    existingClaim: media-data
+    globalMounts:
+      - path: /data
