@@ -10,8 +10,8 @@ and requests + observability (Phase 14) follow as their own phases.
 
 | Deliverable | State |
 |---|---|
-| SMB CSI driver + shared `/data` RWX filesystem | Planned |
-| Plex (single replica, node-reschedule verified) | Planned |
+| SMB CSI driver + shared `/data` RWX filesystem | **Complete** (bootstrapped) |
+| Plex (single replica, node-reschedule verified) | In progress (PR 11-2) |
 | Plex hardware transcoding (Intel QuickSync) | Planned |
 
 ## Delivery pattern (every app)
@@ -71,10 +71,20 @@ tags pinned. UIs are exposed only through the `internal` Envoy Gateway
 
 ### Acceptance evidence — node-failure reschedule (Phase-11 gate)
 
-<!-- TODO: with Plex Ready on node A, take node A down; record that the pod
-     reschedules to another NUC, the Longhorn RWO volume re-attaches, the SMB mount
-     re-mounts, and Plex returns Ready with library intact. Note any Longhorn
-     node-down pod-deletion tuning applied. -->
+The point of this phase: prove the single Plex replica recreates on another NUC when
+its node goes away, with the Longhorn RWO config volume re-attaching and the SMB media
+re-mounting.
+
+- **Safe form (guarded recipe):** `just kube plex-reschedule-verify` cordons the node
+  running Plex, deletes the pod, waits for it to come back **Ready on a different
+  node**, then uncordons. This exercises the RWO re-attach + SMB re-mount + Recreate
+  path without a full outage.
+- **Full node-down form:** power off / reboot the node running Plex and confirm the pod
+  reschedules once Longhorn releases the RWO volume (its node-down timeout). If
+  reschedule is too slow, tune Longhorn's node-down pod-deletion policy.
+
+<!-- TODO: paste the plex-reschedule-verify output (orig node -> new node) and, if run,
+     the full node-down observation, once executed against the live cluster. -->
 
 ## Plex hardware transcoding (Intel QuickSync)
 

@@ -1,0 +1,34 @@
+---
+# yaml-language-server: $schema=https://k8s-schemas.home-operations.com/gateway.networking.k8s.io/httproute_v1.json
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: plex
+  namespace: media
+  annotations:
+    external-dns.k8s.io/audience: internal
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Plex"
+    gethomepage.dev/group: "Media"
+    gethomepage.dev/icon: "plex.svg"
+    gethomepage.dev/href: "https://plex.lab.supermorphic.com"
+spec:
+  hostnames:
+    - plex.lab.supermorphic.com
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: internal
+      namespace: networking
+      sectionName: https
+  rules:
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: plex
+          port: 32400
+          weight: 1
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
