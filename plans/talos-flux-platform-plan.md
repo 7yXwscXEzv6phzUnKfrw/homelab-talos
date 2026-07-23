@@ -1056,6 +1056,13 @@ Suggested order:
 ## Phase 12: Operations and Lifecycle
 
 - Add Renovate in PR-only mode with dependency grouping and no automatic merge.
+  Renovate enters the established PR + `just ci` gate (a private repo needs the Mend
+  Renovate GitHub App or self-hosted). Enable Renovate's `pre-commit` manager so it
+  keeps `.pre-commit-config.yaml` hook `rev`s current, and its Flux/Helm/mise/
+  github-actions managers. Version-source de-duplication is done for the Phase 9/10
+  apps (validators derive from the manifests); still to do before Renovate: the
+  foundation `just`-vars (cilium/cert-manager/metallb/envoy-gateway/external-dns/
+  flux) and the Talos image literals in `talos/mod.just`.
 - Perform one manual Talos patch upgrade, one node at a time, and verify rollback.
 - Perform one manual Kubernetes upgrade with `talosctl upgrade-k8s --dry-run`
   followed by the real upgrade.

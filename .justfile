@@ -24,6 +24,7 @@ mod kube "kubernetes"
 ci:
     just repo lint
     just repo verify
+    just kube kubeconform
     just kube cilium-validate
     just kube flux-validate
     just kube foundation-validate
