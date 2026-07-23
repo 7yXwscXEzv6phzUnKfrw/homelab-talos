@@ -3,27 +3,21 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 set working-directory := ".."
 
 cilium_chart := "oci://quay.io/cilium/charts/cilium"
-cilium_version := "1.19.6"
 cilium_values := "kubernetes/apps/kube-system/cilium/app/values.yaml"
 cilium_app := "kubernetes/apps/kube-system/cilium/app"
 kubeconfig := "kubeconfig"
-flux_version := "2.9.2"
 flux_path := "kubernetes/flux/clusters/prod"
 github_owner := "7yXwscXEzv6phzUnKfrw"
 github_repository := "homelab-talos"
 cert_manager_chart := "oci://quay.io/jetstack/charts/cert-manager"
-cert_manager_version := "v1.21.0"
 metallb_repository := "https://metallb.github.io/metallb"
-metallb_version := "0.16.1"
 envoy_gateway_chart := "oci://docker.io/envoyproxy/gateway-helm"
-envoy_gateway_version := "v1.8.2"
 external_dns_repository := "https://kubernetes-sigs.github.io/external-dns"
-external_dns_chart_version := "1.21.1"
 
 # Render the pinned Cilium chart to standard output without writing generated YAML.
 cilium-render:
     @helm template cilium {{cilium_chart}} \
-      --version {{cilium_version}} \
+      --version "$(yq -r '.spec.ref.tag' {{cilium_app}}/ocirepository.yaml)" \
       --namespace kube-system \
       --values {{cilium_values}}
 
@@ -35,7 +29,7 @@ cilium-validate:
     app_dir='{{cilium_app}}'
     values_file='{{cilium_values}}'
     chart='{{cilium_chart}}'
-    version='{{cilium_version}}'
+    version="$(yq -r '.spec.ref.tag' '{{cilium_app}}/ocirepository.yaml')"
     temp_dir="$(mktemp -d /tmp/homelab-talos-cilium-validate.XXXXXX)"
     trap 'rm -rf -- "$temp_dir"' EXIT
 
@@ -51,7 +45,7 @@ cilium-validate:
       }
     done
 
-    [[ "$(yq -r '.spec.ref.tag' "$app_dir/ocirepository.yaml")" == "$version" ]]
+    [[ -n "$version" && "$version" != 'null' ]]
     [[ "$(yq -r '.spec.url' "$app_dir/ocirepository.yaml")" == "$chart" ]]
     [[ "$(yq -r '.spec.releaseName' "$app_dir/helmrelease.yaml")" == 'cilium' ]]
     [[ "$(yq -r '.spec.targetNamespace' "$app_dir/helmrelease.yaml")" == 'kube-system' ]]
@@ -364,7 +358,7 @@ flux-validate:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    expected_flux='{{flux_version}}'
+    expected_flux="$(yq -p=toml -r '.tools.flux2' .mise.toml 2>/dev/null)"
     expected_recipient="$(yq -r '.creation_rules[] | select(.path_regex | test("kubernetes")) | .age' .sops.yaml)"
     temp_dir="$(mktemp -d /tmp/homelab-talos-flux-validate.XXXXXX)"
     trap 'rm -rf -- "$temp_dir"' EXIT
@@ -563,7 +557,7 @@ flux-verify: flux-validate require-bash
     }
 
     cilium_source="$(kubectl --kubeconfig "$kubeconfig" --namespace kube-system get ocirepository cilium --output json)"
-    [[ "$(yq -r '.spec.ref.tag' - <<<"$cilium_source")" == '{{cilium_version}}' ]]
+    [[ -n "$(yq -r '.spec.ref.tag' - <<<"$cilium_source")" ]]
     [[ "$(yq -r '[.status.conditions[] | select(.type == "Ready") | .status][0]' - <<<"$cilium_source")" == 'True' ]]
     cilium_release="$(kubectl --kubeconfig "$kubeconfig" --namespace kube-system get helmrelease cilium --output json)"
     [[ "$(yq -r '[.status.conditions[] | select(.type == "Ready") | .status][0]' - <<<"$cilium_release")" == 'True' ]]
@@ -649,12 +643,17 @@ foundation-validate:
       exit 1
     }
 
-    [[ "$(yq -r '.spec.ref.tag' kubernetes/apps/security/cert-manager/app/ocirepository.yaml)" == '{{cert_manager_version}}' ]]
+    # Versions are read from the manifests (single source of truth) so a Renovate
+    # bump to a HelmRelease/OCIRepository doesn't need a duplicate literal edited here.
+    cert_manager_version="$(yq -r '.spec.ref.tag' kubernetes/apps/security/cert-manager/app/ocirepository.yaml)"
+    metallb_version="$(yq -r '.spec.chart.spec.version' kubernetes/apps/networking/metallb/app/helmrelease.yaml)"
+    envoy_gateway_version="$(yq -r '.spec.ref.tag' kubernetes/apps/networking/envoy-gateway/app/ocirepository.yaml)"
+    external_dns_chart_version="$(yq -r '.spec.chart.spec.version' kubernetes/apps/networking/external-dns/app/helmrelease.yaml)"
+    for v in "$cert_manager_version" "$metallb_version" "$envoy_gateway_version" "$external_dns_chart_version"; do
+      [[ -n "$v" && "$v" != 'null' ]]
+    done
     [[ "$(yq -r '.spec.url' kubernetes/apps/security/cert-manager/app/ocirepository.yaml)" == '{{cert_manager_chart}}' ]]
-    [[ "$(yq -r '.spec.chart.spec.version' kubernetes/apps/networking/metallb/app/helmrelease.yaml)" == '{{metallb_version}}' ]]
-    [[ "$(yq -r '.spec.ref.tag' kubernetes/apps/networking/envoy-gateway/app/ocirepository.yaml)" == '{{envoy_gateway_version}}' ]]
     [[ "$(yq -r '.spec.url' kubernetes/apps/networking/envoy-gateway/app/ocirepository.yaml)" == '{{envoy_gateway_chart}}' ]]
-    [[ "$(yq -r '.spec.chart.spec.version' kubernetes/apps/networking/external-dns/app/helmrelease.yaml)" == '{{external_dns_chart_version}}' ]]
 
     cert_ks='kubernetes/apps/security/cert-manager/ks.yaml'
     [[ "$(yq ea -r 'select(.metadata.name == "cert-manager") | .spec.dependsOn[].name' "$cert_ks")" == 'cilium' ]]
@@ -718,22 +717,22 @@ foundation-validate:
     export HELM_REPOSITORY_CONFIG="$temp_dir/repositories.yaml"
     export HELM_REPOSITORY_CACHE="$temp_dir/repository-cache"
     helm template cert-manager '{{cert_manager_chart}}' \
-      --version '{{cert_manager_version}}' \
+      --version "$cert_manager_version" \
       --namespace cert-manager \
       --values kubernetes/apps/security/cert-manager/app/values.yaml >"$temp_dir/cert-manager.yaml"
     helm template metallb metallb \
       --repo '{{metallb_repository}}' \
-      --version '{{metallb_version}}' \
+      --version "$metallb_version" \
       --namespace metallb-system \
       --values "$metallb_values" >"$temp_dir/metallb.yaml"
     helm template envoy-gateway '{{envoy_gateway_chart}}' \
-      --version '{{envoy_gateway_version}}' \
+      --version "$envoy_gateway_version" \
       --namespace envoy-gateway-system \
       --include-crds \
       --values kubernetes/apps/networking/envoy-gateway/app/values.yaml >"$temp_dir/envoy-gateway.yaml"
     helm template external-dns-internal external-dns \
       --repo '{{external_dns_repository}}' \
-      --version '{{external_dns_chart_version}}' \
+      --version "$external_dns_chart_version" \
       --namespace external-dns \
       --values "$dns_values" >"$temp_dir/external-dns.yaml"
 

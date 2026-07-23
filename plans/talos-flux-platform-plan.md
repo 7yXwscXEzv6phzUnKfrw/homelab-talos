@@ -1059,10 +1059,12 @@ Suggested order:
   Renovate enters the established PR + `just ci` gate (a private repo needs the Mend
   Renovate GitHub App or self-hosted). Enable Renovate's `pre-commit` manager so it
   keeps `.pre-commit-config.yaml` hook `rev`s current, and its Flux/Helm/mise/
-  github-actions managers. Version-source de-duplication is done for the Phase 9/10
-  apps (validators derive from the manifests); still to do before Renovate: the
-  foundation `just`-vars (cilium/cert-manager/metallb/envoy-gateway/external-dns/
-  flux) and the Talos image literals in `talos/mod.just`.
+  github-actions managers. Version-source de-duplication is done: the app and
+  foundation validators (cilium/cert-manager/metallb/envoy-gateway/external-dns and
+  the flux CLI) now derive versions from the manifests / `.mise.toml`. The only
+  remaining hardcoded versions are the Talos installer/kubelet image literals in
+  `talos/mod.just` — a factory-schematic image string, not trivially derived from
+  `talconfig.yaml`; address it if Renovate is later pointed at the Talos images.
 - Perform one manual Talos patch upgrade, one node at a time, and verify rollback.
 - Perform one manual Kubernetes upgrade with `talosctl upgrade-k8s --dry-run`
   followed by the real upgrade.
