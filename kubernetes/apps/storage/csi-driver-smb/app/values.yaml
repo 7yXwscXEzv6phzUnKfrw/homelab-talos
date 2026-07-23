@@ -1,0 +1,7 @@
+# csi-driver-smb runs a controller Deployment plus a node DaemonSet that mounts the
+# UNAS SMB share into pods (smb.csi.k8s.io). One controller replica is enough for
+# this 3-node homelab. Talos uses the standard kubelet dir (/var/lib/kubelet), the
+# chart default, so no path override is needed. The node plugin needs to run on the
+# schedulable control-plane nodes, which carry no NoSchedule taint here.
+controller:
+  replicas: 1

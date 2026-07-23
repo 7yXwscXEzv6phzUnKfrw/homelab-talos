@@ -1020,6 +1020,147 @@ storage:
     bootstrap_complete=true
     echo 'Phase 9 storage live acceptance passed. Change both storage Git sources to suspend=false, commit, push, and rerun just kube storage-verify.'
 
+# Reconcile the suspended Phase 11 SMB CSI driver after guarded checks, then verify.
+# Run this before media-storage (which depends on it). On failure the resumed
+# Kustomization is re-suspended while its resources are preserved.
+csi-driver-smb:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    owner='7yXwscXEzv6phzUnKfrw'
+    repository='homelab-talos'
+    expected_origin="https://github.com/${owner}/${repository}.git"
+    expected_confirmation='bootstrap:phase11:csi-driver-smb'
+    ks='kubernetes/apps/storage/csi-driver-smb/ks.yaml'
+    resumed=false
+    bootstrap_complete=false
+    cleanup_csi() {
+      if [[ "$bootstrap_complete" != 'true' && "$resumed" == 'true' ]]; then
+        echo 'Phase 11 csi-driver-smb did not pass; suspending it while preserving its resources.' >&2
+        flux suspend kustomization csi-driver-smb --namespace flux-system --kubeconfig "$kubeconfig" >/dev/null 2>&1 || true
+      fi
+    }
+    trap cleanup_csi EXIT
+
+    [[ -f "$kubeconfig" ]] || { echo 'Missing ignored kubeconfig.' >&2; exit 1; }
+    [[ "$(git branch --show-current)" == 'main' ]]
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo 'Refusing csi-driver-smb bootstrap: commit and push the reviewed suspended source first.' >&2
+      exit 1
+    }
+    [[ "$(git remote get-url origin)" == "$expected_origin" ]]
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    [[ "$remote_head" == "$(git rev-parse HEAD)" ]] || {
+      echo 'Refusing csi-driver-smb bootstrap: local HEAD and origin/main differ.' >&2
+      exit 1
+    }
+    [[ "$(yq -r '.spec.suspend' "$ks")" == 'true' ]] || {
+      echo 'Refusing csi-driver-smb bootstrap: it must be staged suspended in Git.' >&2
+      exit 1
+    }
+
+    just kube csi-driver-smb-validate
+    flux reconcile source git flux-system --kubeconfig "$kubeconfig"
+    just kube flux-verify
+    flux reconcile kustomization cluster-apps --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization csi-driver-smb --output jsonpath='{.spec.suspend}')" == 'true' ]] || {
+      echo 'Refusing csi-driver-smb bootstrap: it is not suspended in the live cluster.' >&2
+      exit 1
+    }
+
+    [[ "${CSI_DRIVER_SMB_BOOTSTRAP_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to reconcile the Phase 11 SMB CSI driver.' >&2
+      echo "Set CSI_DRIVER_SMB_BOOTSTRAP_CONFIRM='$expected_confirmation' after reviewing csi-driver-smb-validate." >&2
+      exit 1
+    }
+
+    resumed=true
+    flux resume kustomization csi-driver-smb --namespace flux-system --kubeconfig "$kubeconfig"
+    flux reconcile kustomization csi-driver-smb --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait --for=condition=Ready kustomization/csi-driver-smb --timeout=10m
+
+    just kube csi-driver-smb-verify
+    bootstrap_complete=true
+    echo 'Phase 11 csi-driver-smb live acceptance passed. Set suspend=false in Git, commit, push, and rerun just kube csi-driver-smb-verify.'
+
+# Reconcile the suspended Phase 11 media namespace + shared SMB storage after guarded
+# checks, in dependency order (media, then media-storage), then verify. Requires the
+# smb-credentials Secret (just repo media-smb-secrets) and csi-driver-smb already
+# bootstrapped. Flux decrypts the SMB Secret in-cluster, so this needs no operator
+# SOPS key. On failure the resumed Kustomizations are re-suspended, resources kept.
+media-storage:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    owner='7yXwscXEzv6phzUnKfrw'
+    repository='homelab-talos'
+    expected_origin="https://github.com/${owner}/${repository}.git"
+    expected_confirmation='bootstrap:phase11:media-storage'
+    names=(media media-storage)
+    ns_ks='kubernetes/apps/media/namespace/ks.yaml'
+    st_ks='kubernetes/apps/media/storage/ks.yaml'
+    resumed=()
+    bootstrap_complete=false
+    cleanup_media() {
+      if [[ "$bootstrap_complete" != 'true' && "${#resumed[@]}" -gt 0 ]]; then
+        echo 'Phase 11 media storage did not pass; suspending attempted Kustomizations while preserving their resources.' >&2
+        for name in "${resumed[@]}"; do
+          flux suspend kustomization "$name" --namespace flux-system --kubeconfig "$kubeconfig" >/dev/null 2>&1 || true
+        done
+      fi
+    }
+    trap cleanup_media EXIT
+
+    [[ -f "$kubeconfig" ]] || { echo 'Missing ignored kubeconfig.' >&2; exit 1; }
+    [[ "$(git branch --show-current)" == 'main' ]]
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo 'Refusing media-storage bootstrap: commit and push the reviewed suspended sources first.' >&2
+      exit 1
+    }
+    [[ "$(git remote get-url origin)" == "$expected_origin" ]]
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    [[ "$remote_head" == "$(git rev-parse HEAD)" ]] || {
+      echo 'Refusing media-storage bootstrap: local HEAD and origin/main differ.' >&2
+      exit 1
+    }
+    for f in "$ns_ks" "$st_ks"; do
+      [[ "$(yq -r '.spec.suspend' "$f")" == 'true' ]] || {
+        echo "Refusing media-storage bootstrap: $f must be staged suspended in Git." >&2
+        exit 1
+      }
+    done
+
+    just kube media-storage-validate
+    flux reconcile source git flux-system --kubeconfig "$kubeconfig"
+    just kube flux-verify
+    flux reconcile kustomization cluster-apps --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
+    for name in "${names[@]}"; do
+      [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization "$name" --output jsonpath='{.spec.suspend}')" == 'true' ]] || {
+        echo "Refusing media-storage bootstrap: $name is not suspended in the live cluster." >&2
+        exit 1
+      }
+    done
+
+    [[ "${MEDIA_STORAGE_BOOTSTRAP_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to reconcile the Phase 11 media storage foundation.' >&2
+      echo "Set MEDIA_STORAGE_BOOTSTRAP_CONFIRM='$expected_confirmation' after reviewing media-storage-validate." >&2
+      exit 1
+    }
+
+    for name in "${names[@]}"; do
+      echo "Reconciling media Kustomization $name."
+      resumed+=("$name")
+      flux resume kustomization "$name" --namespace flux-system --kubeconfig "$kubeconfig"
+      flux reconcile kustomization "$name" --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
+      kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait --for=condition=Ready "kustomization/$name" --timeout=10m
+    done
+
+    just kube media-storage-verify
+    bootstrap_complete=true
+    echo 'Phase 11 media storage live acceptance passed. Set both suspend=false in Git, commit, push, and rerun just kube media-storage-verify. Then run the hardlink proof in docs/phase-11-media.md.'
+
 # Reconcile the suspended Phase 10 monitoring stack (kube-prometheus-stack) after
 # guarded checks, in dependency order, then verify. Flux decrypts the Grafana
 # Secret in-cluster, so this needs no operator SOPS key. On failure the resumed

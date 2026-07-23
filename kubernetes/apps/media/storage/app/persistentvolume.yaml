@@ -1,0 +1,43 @@
+---
+# One static RWX PersistentVolume backed by the single UNAS SMB share
+# //192.168.0.3/Prometheus, mounted at /data in every media pod. downloads/ and
+# media/ are subfolders of this one share so Sonarr/Radarr imports hardlink instead
+# of copying. Bulk media never goes on Longhorn. Capacity is nominal — SMB does not
+# enforce it; the share's real capacity lives on the NAS. Reclaim policy Retain so
+# deleting the PVC never touches NAS data.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: media-data
+spec:
+  capacity:
+    storage: 100Ti
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions:
+    # Force consistent ownership (SMB does not map POSIX ownership) to the bjw-s
+    # app-template runtime user 568:568, so Plex and the later *arr/qBittorrent apps
+    # all see the same owner without a startup chown. noperm skips client-side
+    # permission checks; mfsymlinks enables symlink support. Server inode numbers are
+    # kept (no noserverino) so hardlink detection via link count works.
+    - dir_mode=0775
+    - file_mode=0664
+    - uid=568
+    - gid=568
+    - noperm
+    - mfsymlinks
+    - cache=strict
+  csi:
+    driver: smb.csi.k8s.io
+    readOnly: false
+    volumeHandle: media-data-prometheus
+    volumeAttributes:
+      source: //192.168.0.3/Prometheus
+    nodeStageSecretRef:
+      name: smb-credentials
+      namespace: media
+  claimRef:
+    name: media-data
+    namespace: media

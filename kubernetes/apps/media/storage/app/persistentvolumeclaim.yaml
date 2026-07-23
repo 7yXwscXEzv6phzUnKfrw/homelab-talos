@@ -1,0 +1,16 @@
+---
+# Binds directly to the static media-data PV (volumeName + empty storageClassName
+# disables dynamic provisioning). Every media pod mounts this one RWX claim at /data.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: media-data
+  namespace: media
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: media-data
+  resources:
+    requests:
+      storage: 100Ti

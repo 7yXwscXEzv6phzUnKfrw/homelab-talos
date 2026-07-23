@@ -367,6 +367,68 @@ storage-secrets:
     mv -- "$temp_dir/nas-credentials.sops.yaml" "$target"
     echo "Wrote SOPS-encrypted $target (nas-credentials in longhorn-system)."
 
+# Validate the UNAS SMB credentials for the media share and write only the
+# SOPS-encrypted smb-credentials Secret (in the media namespace) that csi-driver-smb
+# uses to mount //192.168.0.3/Prometheus at /data. Keys are username/password (what
+# smb.csi.k8s.io expects), distinct from the Longhorn backup Secret. Best-effort
+# smbclient auth check when available. Never echoes the password.
+media-smb-secrets:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    expected_confirmation='write:media:smb-credentials:sops'
+    target='kubernetes/apps/media/storage/app/smb-credentials.sops.yaml'
+    smb_share='//192.168.0.3/Prometheus'
+    temp_dir="$(mktemp -d /tmp/homelab-talos-media-smb-secrets.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+    umask 077
+
+    just repo secrets
+    [[ -n "${CIFS_USERNAME:-}" ]] || {
+      echo 'Set CIFS_USERNAME to the UNAS SMB user for the Prometheus media share.' >&2
+      exit 1
+    }
+    [[ -n "${CIFS_PASSWORD:-}" ]] || {
+      echo 'Set CIFS_PASSWORD to that SMB user password.' >&2
+      exit 1
+    }
+    [[ "${MEDIA_SMB_SECRETS_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to write the media SMB Secret.' >&2
+      echo "Set MEDIA_SMB_SECRETS_CONFIRM='$expected_confirmation' after reviewing the target." >&2
+      exit 1
+    }
+
+    if command -v smbclient >/dev/null 2>&1; then
+      if PASSWD="$CIFS_PASSWORD" smbclient "$smb_share" -U "$CIFS_USERNAME" -c 'ls' >/dev/null 2>&1; then
+        echo "SMB auth to $smb_share succeeded."
+      else
+        echo "SMB auth to $smb_share failed; check CIFS_USERNAME/CIFS_PASSWORD and the share." >&2
+        exit 1
+      fi
+    else
+      echo 'smbclient not found; skipping the live SMB auth check (media-storage-verify confirms the mount after rollout).' >&2
+    fi
+
+    export CIFS_USERNAME CIFS_PASSWORD
+    yq -n \
+      '.apiVersion = "v1" |
+       .kind = "Secret" |
+       .metadata.name = "smb-credentials" |
+       .metadata.namespace = "media" |
+       .type = "Opaque" |
+       .stringData.username = strenv(CIFS_USERNAME) |
+       .stringData.password = strenv(CIFS_PASSWORD)' \
+      >"$temp_dir/smb-credentials.yaml"
+
+    sops --encrypt --filename-override "$target" \
+      "$temp_dir/smb-credentials.yaml" >"$temp_dir/smb-credentials.sops.yaml"
+    [[ "$(sops filestatus "$temp_dir/smb-credentials.sops.yaml" | yq -r '.encrypted')" == 'true' ]]
+    [[ "$(yq -r '.sops.age[].recipient' "$temp_dir/smb-credentials.sops.yaml" | sort -u)" == "$(yq -r '.creation_rules[1].age' .sops.yaml)" ]]
+    ! rg -Fq -- "$CIFS_PASSWORD" "$temp_dir/smb-credentials.sops.yaml"
+
+    mv -- "$temp_dir/smb-credentials.sops.yaml" "$target"
+    echo "Wrote SOPS-encrypted $target (smb-credentials in media)."
+
 # Write only the SOPS-encrypted Grafana admin Secret for kube-prometheus-stack
 # from GRAFANA_ADMIN_USER/GRAFANA_ADMIN_PASSWORD. Never echoes the password.
 monitoring-secrets:

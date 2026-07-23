@@ -1096,6 +1096,118 @@ storage-validate: require-bash
 
     echo 'Phase 9 storage source, encrypted CIFS Secret, dependency graph, values, and pinned Longhorn render passed validation.'
 
+# Validate the Phase 11 SMB CSI driver source, wiring, dependency, and pinned render.
+csi-driver-smb-validate: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    base='kubernetes/apps/storage/csi-driver-smb'
+    ks="$base/ks.yaml"
+    hr="$base/app/helmrelease.yaml"
+    repo="$base/app/helmrepository.yaml"
+    values="$base/app/values.yaml"
+    chart_repo='https://raw.githubusercontent.com/kubernetes-csi/csi-driver-smb/master/charts'
+    temp_dir="$(mktemp -d /tmp/homelab-talos-csi-smb-validate.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+
+    for f in "$ks" "$hr" "$repo" "$values" "$base/app/namespace.yaml" "$base/app/kustomization.yaml"; do
+      [[ -f "$f" ]] || { echo "Missing Phase 11 csi-driver-smb source: $f" >&2; exit 1; }
+    done
+
+    rg -qx '  - ./csi-driver-smb/ks.yaml' kubernetes/apps/storage/kustomization.yaml || {
+      echo 'Refusing: ./csi-driver-smb/ks.yaml is not wired into kubernetes/apps/storage/kustomization.yaml.' >&2
+      exit 1
+    }
+
+    suspend_state="$(yq -r '.spec.suspend // false' "$ks")"
+    [[ "$suspend_state" == 'true' || "$suspend_state" == 'false' ]]
+    [[ "$(yq -r '.spec.dependsOn[].name' "$ks")" == 'cilium' ]]
+    [[ "$(yq -r '.metadata.labels."pod-security.kubernetes.io/enforce"' "$base/app/namespace.yaml")" == 'privileged' ]]
+
+    chart_version="$(yq -r '.spec.chart.spec.version' "$hr")"
+    [[ -n "$chart_version" && "$chart_version" != 'null' ]]
+    [[ "$(yq -r '.spec.url' "$repo")" == "$chart_repo" ]]
+
+    kustomize build "$base/app" >/dev/null
+
+    printf 'apiVersion: v1\ngenerated: null\nrepositories: []\n' >"$temp_dir/repos.yaml"
+    HELM_REPOSITORY_CONFIG="$temp_dir/repos.yaml" HELM_REPOSITORY_CACHE="$temp_dir/cache" \
+      helm template csi-driver-smb csi-driver-smb --repo "$chart_repo" --version "$chart_version" --namespace csi-driver-smb --values "$values" >"$temp_dir/render.yaml"
+    rg -q 'smb\.csi\.k8s\.io' "$temp_dir/render.yaml"
+
+    echo "csi-driver-smb $chart_version source, wiring, dependency, and pinned render passed validation."
+
+# Validate the Phase 11 shared media storage: namespace + app-template source,
+# encrypted SMB Secret, static RWX SMB PV/PVC, dependency graph, and wiring.
+media-storage-validate: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    ns_ks='kubernetes/apps/media/namespace/ks.yaml'
+    st_ks='kubernetes/apps/media/storage/ks.yaml'
+    nsfile='kubernetes/apps/media/namespace/app/namespace.yaml'
+    oci='kubernetes/apps/media/namespace/app/ocirepository.yaml'
+    pv='kubernetes/apps/media/storage/app/persistentvolume.yaml'
+    pvc='kubernetes/apps/media/storage/app/persistentvolumeclaim.yaml'
+    secret='kubernetes/apps/media/storage/app/smb-credentials.sops.yaml'
+    expected_recipient="$(yq -r '.creation_rules[] | select(.path_regex | test("kubernetes")) | .age' .sops.yaml)"
+
+    for f in "$ns_ks" "$st_ks" "$nsfile" "$oci" "$pv" "$pvc" "$secret" \
+      kubernetes/apps/media/namespace/app/kustomization.yaml \
+      kubernetes/apps/media/storage/app/kustomization.yaml \
+      kubernetes/apps/media/kustomization.yaml; do
+      [[ -f "$f" ]] || {
+        echo "Missing Phase 11 media storage source: $f" >&2
+        echo 'Run just repo media-smb-secrets if the SMB Secret is missing.' >&2
+        exit 1
+      }
+    done
+
+    rg -qx '  - ./media' kubernetes/apps/kustomization.yaml || {
+      echo 'Refusing: ./media is not wired into kubernetes/apps/kustomization.yaml.' >&2
+      exit 1
+    }
+
+    media_suspend="$(yq -r '.spec.suspend // false' "$ns_ks")"
+    storage_suspend="$(yq -r '.spec.suspend // false' "$st_ks")"
+    [[ "$media_suspend" == "$storage_suspend" ]] || {
+      echo 'media and media-storage must be staged together: both suspended or both active.' >&2
+      exit 1
+    }
+    [[ "$media_suspend" == 'true' || "$media_suspend" == 'false' ]]
+
+    [[ "$(yq -r '.spec.dependsOn[].name' "$ns_ks")" == 'cilium' ]]
+    [[ "$(yq -r '[.spec.dependsOn[].name] | sort | join(",")' "$st_ks")" == 'csi-driver-smb,media' ]]
+
+    [[ "$(yq -r '.metadata.labels."gateway.supermorphic.com/access"' "$nsfile")" == 'internal' ]]
+    [[ "$(yq -r '.metadata.labels."pod-security.kubernetes.io/enforce"' "$nsfile")" == 'privileged' ]]
+
+    [[ "$(yq -r '.spec.url' "$oci")" == 'oci://ghcr.io/bjw-s-labs/helm/app-template' ]]
+    oci_tag="$(yq -r '.spec.ref.tag' "$oci")"
+    [[ -n "$oci_tag" && "$oci_tag" != 'null' ]]
+
+    [[ "$(sops filestatus "$secret" | yq -r '.encrypted')" == 'true' ]]
+    [[ "$(yq -r '.sops.age[].recipient' "$secret" | sort -u)" == "$expected_recipient" ]]
+    [[ "$(yq -r '.kind' "$secret")" == 'Secret' ]]
+    [[ "$(yq -r '.metadata.name' "$secret")" == 'smb-credentials' ]]
+    [[ "$(yq -r '.metadata.namespace' "$secret")" == 'media' ]]
+
+    [[ "$(yq -r '.kind' "$pv")" == 'PersistentVolume' ]]
+    [[ "$(yq -r '.spec.csi.driver' "$pv")" == 'smb.csi.k8s.io' ]]
+    [[ "$(yq -r '.spec.csi.volumeAttributes.source' "$pv")" == '//192.168.0.3/Prometheus' ]]
+    [[ "$(yq -r '.spec.accessModes[]' "$pv" | sort -u)" == 'ReadWriteMany' ]]
+    [[ "$(yq -r '.spec.csi.nodeStageSecretRef.name' "$pv")" == 'smb-credentials' ]]
+    [[ "$(yq -r '.spec.csi.nodeStageSecretRef.namespace' "$pv")" == 'media' ]]
+
+    [[ "$(yq -r '.spec.accessModes[]' "$pvc" | sort -u)" == 'ReadWriteMany' ]]
+    [[ "$(yq -r '.spec.volumeName' "$pvc")" == 'media-data' ]]
+    [[ "$(yq -r '.metadata.namespace' "$pvc")" == 'media' ]]
+
+    kustomize build kubernetes/apps/media/namespace/app >/dev/null
+    kustomize build kubernetes/apps/media/storage/app >/dev/null
+
+    echo 'Phase 11 media storage source, encrypted SMB Secret, static RWX SMB PV/PVC, dependency graph, and wiring passed validation.'
+
 # Verify the live Longhorn acceptance gate: controllers, node disks, default
 # StorageClass, backup target, recurring jobs, and a two-replica test PVC.
 storage-verify: require-bash
@@ -1173,6 +1285,49 @@ storage-verify: require-bash
 
     just kube foundation-verify
     echo 'Phase 9 storage acceptance passed: Longhorn healthy on three nodes (disks at /var/mnt/longhorn), default two-replica StorageClass, backup target available, recurring jobs present, and a test PVC bound with replicas on two distinct nodes.'
+
+# Verify the live Phase 11 SMB CSI driver: Kustomization Ready, controller +
+# node plugin rolled out, and the CSIDriver registered.
+csi-driver-smb-verify: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    ns='csi-driver-smb'
+
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization csi-driver-smb --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || {
+      echo 'csi-driver-smb Kustomization is not Ready.' >&2
+      exit 1
+    }
+    kubectl --kubeconfig "$kubeconfig" --namespace "$ns" rollout status deployment/csi-smb-controller --timeout=3m
+    kubectl --kubeconfig "$kubeconfig" --namespace "$ns" rollout status daemonset/csi-smb-node --timeout=3m
+    kubectl --kubeconfig "$kubeconfig" get csidriver smb.csi.k8s.io >/dev/null || {
+      echo 'CSIDriver smb.csi.k8s.io is not registered.' >&2
+      exit 1
+    }
+    echo 'Phase 11 csi-driver-smb acceptance passed: Kustomization Ready, controller + node plugin rolled out, CSIDriver registered.'
+
+# Verify the live Phase 11 shared media storage: Kustomizations Ready and the
+# static RWX media-data PVC Bound. The mount is exercised for real by Plex (PR 11-2)
+# and the documented hardlink proof (docs/phase-11-media.md); binding a static PV is
+# a claimRef match and does not by itself prove the SMB mount works.
+media-storage-verify: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+
+    for n in media media-storage; do
+      [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization "$n" --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || {
+        echo "Media Kustomization $n is not Ready." >&2
+        exit 1
+      }
+    done
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace media get pvc media-data --output jsonpath='{.status.phase}' 2>/dev/null)" == 'Bound' ]] || {
+      echo 'PVC media/media-data is not Bound.' >&2
+      exit 1
+    }
+    echo 'Phase 11 media storage acceptance passed: media + media-storage Kustomizations Ready and media-data PVC Bound. Run the hardlink proof in docs/phase-11-media.md next.'
 
 # Validate the Phase 10 monitoring source: files, encrypted Grafana Secret,
 # dependency graph, staged-suspend uniformity, key values, wiring, HTTPRoutes,
