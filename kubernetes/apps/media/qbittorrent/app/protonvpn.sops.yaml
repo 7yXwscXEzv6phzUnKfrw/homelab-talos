@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: protonvpn
+    namespace: media
+type: Opaque
+stringData:
+    WIREGUARD_PRIVATE_KEY: ENC[AES256_GCM,data:2sWXYXbW5wREpHT78i83uKQ6YVKMRoczZB0jypnU5ZzTu5z3a4oX76SQXKo=,iv:n2X45B0fMAbqIVM6mKbXossNxp9X9dvjXu1KyAZLkoc=,tag:adeWz6q19+iAjddgqALohw==,type:str]
+    config.toml: ENC[AES256_GCM,data:wefe/1OdowezS6dZVbdNznM9oDBGUm0Ghpvk8Dm+tqUJHS8qaCuZySkFjZSQ8ruwwWWXY6/2wwAFHb/nuUihxavo3smfuiv+Z/Kl78lXwkiC8AdTMU7dB325CX3bG2Ix6dC1uDA1EEQlQA5doL3OCcUSjFLY3h+URsbnMxcgmfmtb4gIGEcMueimPrvJnplXUlCQIVF12K8O4hm0qebVMUsxTKUDkLCDPRUA1KgJnql/6arghaHXuehEuhV+ojSacQbN19AJiOOVAcVoe0FeTnwnzfzjZSI+riHZ9wQk53aSnZ8rYQK8aKAPzfssB5hVgMDrWwN0Ly7KHWECC+T6U08hbq3iSXrfW74HDRBf25ft,iv:Ywni87CWeFC2Zv9qhk+wk6Zogu3dvYdaLBkcCzb6A8Y=,tag:VZsmH42HjIZzoe64mDAgBA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA5ZEFLMDV1bVNhQnNyTnRw
+            a1NEeHhjUWJBMnRaT3Z4OW5WTkhuRStld1I0CjQvaEQ3TUduVVVYMlBUVzZUSEpp
+            TS9KVFRoWW5ra1hCZHVyTUsrcXZlVm8KLS0tIHljQWNZWEdkc1ZvZldScG80NERT
+            bkxFSFpmS0t0eEFONEtDY3JMUFNaaVEK3syZtSVr9fVs/aI0paNxGBKQ1AN2zOd2
+            oQYvHEbBce4UJx7c4fNNrFyc3tb03KgeOPfBwgdYM5K14oK+uK0ppA==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1da2cywfkg9hp6v39jvj9qcmqz4n8w3gm6nqj5vygu7e0zzgnp5psne9wlx
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-07-23T23:46:19Z"
+    mac: ENC[AES256_GCM,data:7+JV+0iEUkOeN5OYA5rPJn3LV1+AjI9DzTYH4ZScyhiRj/ZkF5mjhaWUXzKsMa3hD376fj6Vo/fNg5eH69alKSya5KfNZN2lDICcu7WWwXAcbVcWok2xZ2d0saqpsWhZIcR+PuwT/hsgLBxVTM87cEqb9+4XAQqoHppnmcgtFWA=,iv:JVdBCynmANCfjowaTyjakZ+kjjHoYbMSkrS7PKbWlxg=,tag:tt4KUPedpEkywaxGfHWxpg==,type:str]
+    version: 3.13.2
