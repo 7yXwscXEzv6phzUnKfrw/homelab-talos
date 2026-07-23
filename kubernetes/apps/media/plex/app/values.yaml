@@ -9,6 +9,8 @@ controllers:
     type: deployment
     strategy: Recreate
     pod:
+      # Give Plex time to close its SQLite database cleanly on a planned drain.
+      terminationGracePeriodSeconds: 120
       securityContext:
         runAsUser: 568
         runAsGroup: 568
@@ -52,7 +54,10 @@ service:
 persistence:
   config:
     type: persistentVolumeClaim
-    accessMode: ReadWriteOnce
+    # ReadWriteOncePod: strongest single-writer isolation for the Plex SQLite DB
+    # (only one pod cluster-wide may mount it RW). Falls back to ReadWriteOnce if a
+    # hard node-down ever leaves the replacement pod stuck on the old pod's claim.
+    accessMode: ReadWriteOncePod
     size: 30Gi
     storageClass: longhorn
     globalMounts:

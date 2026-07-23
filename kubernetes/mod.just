@@ -1245,7 +1245,7 @@ plex-validate: require-bash
     [[ "$(yq -r '.controllers.plex.containers.app.image.repository' "$values")" == 'ghcr.io/home-operations/plex' ]]
     image_tag="$(yq -r '.controllers.plex.containers.app.image.tag' "$values")"
     [[ -n "$image_tag" && "$image_tag" != 'null' ]]
-    [[ "$(yq -r '.persistence.config.accessMode' "$values")" == 'ReadWriteOnce' ]]
+    [[ "$(yq -r '.persistence.config.accessMode' "$values")" == 'ReadWriteOncePod' ]]
     [[ "$(yq -r '.persistence.config.storageClass' "$values")" == 'longhorn' ]]
     [[ "$(yq -r '.persistence.media.existingClaim' "$values")" == 'media-data' ]]
     [[ "$(yq -r '.persistence.transcode.type' "$values")" == 'emptyDir' ]]
@@ -1263,7 +1263,7 @@ plex-validate: require-bash
     [[ "$(yq -r 'select(.kind == "Deployment") | .metadata.name' "$temp_dir/render.yaml")" == 'plex' ]]
     [[ "$(yq -r 'select(.kind == "Deployment") | .spec.strategy.type' "$temp_dir/render.yaml")" == 'Recreate' ]]
 
-    echo "Plex $image_tag source, app-template chartRef, values (Recreate/RWO config, media-data, emptyDir transcode), HTTPRoute, and pinned render passed validation."
+    echo "Plex $image_tag source, app-template chartRef, values (Recreate/RWOP config, media-data, emptyDir transcode), HTTPRoute, and pinned render passed validation."
 
 # Verify the live Longhorn acceptance gate: controllers, node disks, default
 # StorageClass, backup target, recurring jobs, and a two-replica test PVC.
