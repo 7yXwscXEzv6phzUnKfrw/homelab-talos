@@ -2,17 +2,18 @@
 
 ## Status
 
-**Planned.** Phase 11 stands up the shared SMB `/data` filesystem and brings Plex
-into the cluster (it historically ran off-cluster on the Mac Mini). The gating
-milestone is a single-replica Plex that recreates on another NUC after a node
-failure. The VPN download client (Phase 12), the *arr automation apps (Phase 13),
-and requests + observability (Phase 14) follow as their own phases.
+**Complete (2026-07-23).** Phase 11 stood up the shared SMB `/data` filesystem and
+brought Plex into the cluster (it historically ran off-cluster on the Mac Mini),
+migrating the existing server's identity + library database + watch history. The
+Mac-mini install has been decommissioned. The VPN download client (Phase 12), the
+*arr automation apps (Phase 13), and requests + observability (Phase 14) follow as
+their own phases.
 
 | Deliverable | State |
 |---|---|
 | SMB CSI driver + shared `/data` RWX filesystem | **Complete** (bootstrapped) |
-| Plex (single replica, node-reschedule verified) | **Reschedule verified** (2026-07-23); HW transcode pending (11-3) |
-| Plex hardware transcoding (Intel QuickSync) | Planned |
+| Plex (single replica, migrated, node-reschedule verified) | **Complete** (2026-07-23) |
+| Plex hardware transcoding (Intel QuickSync) | **Complete** (2026-07-23) — enable the Plex "use hardware acceleration" toggle to activate |
 
 ## Delivery pattern (every app)
 
@@ -148,7 +149,26 @@ Ready, rollout complete, HTTPRoute Accepted, Pi-hole DNS, `/identity` over TLS).
 
 ### Acceptance evidence — hardware transcode
 
-<!-- TODO: confirm a transcode session uses /dev/dri (QuickSync), not software. -->
+**Evidence (2026-07-23):** the standalone Intel GPU device plugin
+(`intel/intel-gpu-plugin:0.36.0`, DaemonSet in `kube-system`) is live and **all three
+NUCs advertise `gpu.intel.com/i915=1`** — the `siderolabs/i915` extension exposes
+`/dev/dri`. Plex requests `gpu.intel.com/i915: 1`, so it schedules onto a GPU-capable
+node and the plugin (via CDI) injects `/dev/dri/renderD128` **owned by the runtime user
+`568` and world-writable** — verified inside the Plex pod, so no `supplementalGroups`
+are needed. Final activation is the Plex UI toggle **Settings → Transcoder → "Use
+hardware acceleration when available"**; a transcode then shows **"(hw)"** in the
+dashboard.
+
+## Migration note (Mac-mini → cluster, 2026-07-23)
+
+The existing Mac-mini Plex was migrated by copying its data dir into the `/config`
+volume (through the SMB share as the transfer conduit) — preserving server identity,
+library database, watch history, and metadata. Gotchas encountered: 17,515 macOS `._*`
+AppleDouble files from `tar` hung Plex's boot (purged); the auth token didn't survive
+(re-claimed via `/myplex/claim` over a localhost port-forward); and smart-collection
+composite art referenced a stale server ID (`75cfa7ee…`) from an earlier server —
+repointed in `metadata_items.extra_data` to the current ID with a DB copy + integrity
+check as safeguards. A pre-repoint Longhorn backup to the NAS was taken first.
 
 ## Recovery notes
 
