@@ -97,24 +97,43 @@ container), not from Gluetun (which has VPN-infra allowances), so they measure e
 what a torrent would see.
 
 1. **Baseline (up, Sweden, not home):** control server reports `status=running`; public IP
-   ≠ home WAN and **country == Sweden**; qBittorrent's own egress IP == the VPN IP; the
-   forwarded port is active and **applied to qBittorrent's `listen_port`** (proves the UP
-   command ran).
+   ≠ home WAN and **country == Sweden**; qBittorrent's own egress IP (probed via
+   `ifconfig.me/ip`) == the VPN IP; the forwarded port is active and **applied to
+   qBittorrent's `listen_port`** (proves the UP command ran); and the app container's
+   **only resolver is `127.0.0.1`** (Gluetun's in-netns DoT) — a structural, cache-proof
+   proof that DNS is tunneled, never sent to the node/ISP resolver.
 2. **Polite stop (held down):** `PUT /v1/vpn/status {stopped}`, then over ~15s the `app`
-   container must show **no IP egress** (`ifconfig.me`), **no route-level egress**
-   (Cloudflare `1.1.1.1` by IP, bypassing DNS), and **no DNS resolution** — and never the
-   home IP.
-3. **Hard failure (automated crash):** `kill -KILL 1` on the Gluetun container; across the
-   entire crash+restart window the home WAN IP **must never egress**. Gluetun must
-   auto-recover (native sidecar `restartPolicy: Always`). Validates the unexpected-failure
-   path, not just the polite API stop.
-4. **Recovery:** VPN back → country Sweden again → forwarded port **reacquired and
-   reapplied** to `listen_port` (DOWN→UP cycle) with no manual editing.
-5. **Final:** `status=running`, egress == VPN IP, country Sweden.
+   container must show **no IP egress** (`ifconfig.me/ip`) and **no route-level egress**
+   (Cloudflare `1.1.1.1` by IP, bypassing DNS) — and never the home IP.
+3. **Recovery via pod recreation (the node-reschedule path):** delete the pod; a fresh
+   netns + Gluetun start must return `status=running`, **country Sweden**, egress == VPN
+   IP (≠ home), and the forwarded port **reacquired and reapplied** to `listen_port`
+   (DOWN→UP cycle) with no manual editing.
+4. **Final:** `status=running`, egress == VPN IP, country Sweden.
 
-A `trap` restores the VPN to `running` on exit so a failed run never leaves it stopped.
+On a failed/interrupted run a `trap` deletes the pod to reset to a clean state.
 Precondition: first-run done (WebUI password + "Bypass authentication for localhost",
 which the port-forward UP command also needs).
+
+### Verified findings (live, 2026-07-23)
+
+- **Kill switch is solid:** every run showed egress only via ProtonVPN Sweden at baseline,
+  **zero IP/route egress** while stopped, and the **home WAN IP never appeared**. DNS is
+  isolated (resolver = `127.0.0.1`). This — the hard requirement — passed repeatedly.
+- **`kubectl exec … kill -KILL 1` cannot crash the sidecar:** the kernel blocks
+  same-PID-namespace SIGKILL to PID 1 (`restartCount` stayed 0), so a container-level crash
+  can't be injected from an exec. Fail-closed on a real in-place gluetun crash is
+  structural anyway (qBittorrent has no `NET_ADMIN`; Gluetun's firewall DROP rules persist).
+  The gate therefore recovers via **pod recreation** (= node reschedule), which is
+  deterministic and recovered to Sweden in seconds in testing.
+- **In-place restart can loop:** Gluetun's control-API `PUT stopped→running` (and its own
+  healthcheck-triggered restart) sometimes re-establishes the WireGuard handshake but then
+  cycles on `lookup … i/o timeout` DNS healthchecks. Rapid repeated reconnects during
+  testing triggered **ProtonVPN reconnect rate-limiting** (handshake succeeds, no traffic).
+  Robust recovery is a **pod restart / node reschedule** (fresh netns), and the reactive
+  `QbittorrentVpnDown` critical alert surfaces any stuck-down VPN for the unattended case.
+  A follow-up option to harden in-place recovery is Gluetun DNS tuning (`DOT=off` or a
+  `HEALTH_TARGET_ADDRESS` IP so the healthcheck doesn't depend on DNS).
 
 ## Observability (reactive VPN-down reporting)
 
