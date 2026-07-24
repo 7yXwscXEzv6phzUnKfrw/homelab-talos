@@ -1,0 +1,84 @@
+# Sonarr (TV) via the bjw-s app-template chart. Single replica, Recreate on a Longhorn
+# RWO config volume (single-writer SQLite). The shared SMB PVC (media-data) is mounted at
+# /data so imports HARDLINK from /data/downloads into /data/media/tv (same filesystem) —
+# never a copy. Root folder /data/media/tv and the qBittorrent download client are manual
+# first-run settings persisted in the config PVC.
+controllers:
+  sonarr:
+    type: deployment
+    strategy: Recreate
+    pod:
+      securityContext:
+        runAsUser: 568
+        runAsGroup: 568
+        fsGroup: 568
+        fsGroupChangePolicy: OnRootMismatch
+    containers:
+      app:
+        image:
+          repository: ghcr.io/home-operations/sonarr
+          tag: 4.0.18.2978
+        env:
+          TZ: America/Denver
+        resources:
+          requests:
+            cpu: 25m
+            memory: 256Mi
+          limits:
+            # Headroom for library scans; no CPU limit per repo convention.
+            memory: 1Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        probes:
+          # /ping is unauthenticated and returns 200 — real health, unlike a TCP check.
+          readiness:
+            enabled: true
+            custom: true
+            spec:
+              httpGet:
+                path: /ping
+                port: 8989
+              periodSeconds: 10
+              failureThreshold: 3
+          liveness:
+            enabled: true
+            custom: true
+            spec:
+              httpGet:
+                path: /ping
+                port: 8989
+              periodSeconds: 30
+              failureThreshold: 5
+          startup:
+            enabled: true
+            custom: true
+            spec:
+              httpGet:
+                path: /ping
+                port: 8989
+              periodSeconds: 5
+              failureThreshold: 30
+service:
+  app:
+    controller: sonarr
+    ports:
+      http:
+        port: 8989
+persistence:
+  config:
+    type: persistentVolumeClaim
+    accessMode: ReadWriteOnce
+    size: 5Gi
+    storageClass: longhorn
+    # Preserve the series library/config across a teardown (Longhorn reclaim is Delete).
+    annotations:
+      helm.sh/resource-policy: keep
+    globalMounts:
+      - path: /config
+  data:
+    type: persistentVolumeClaim
+    existingClaim: media-data
+    globalMounts:
+      - path: /data

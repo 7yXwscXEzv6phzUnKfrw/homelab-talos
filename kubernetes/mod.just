@@ -1763,6 +1763,100 @@ qbittorrent-killswitch-verify: require-bash
     printf '%s' "$fc" | grep -qi 'sweden' || { echo "Final country '$fc' not Sweden." >&2; exit 1; }
     echo "PASS: kill switch is bulletproof — egress only via ProtonVPN Sweden ($fip); fail-closed on polite stop AND hard crash; DNS isolated; forwarded port reacquired+reapplied; home WAN IP ($home_ip) never leaked. Safe to flip suspend: false."
 
+# Validate the Phase 13 *arr source (Prowlarr, Sonarr, Radarr): files, wiring, dependency
+# graph, no-secret ks, app-template chartRef, config-PVC (Longhorn RWO + Recreate + keep),
+# shared /data for sonarr/radarr, HTTPRoutes, Gatus /ping probes, and the pinned
+# app-template render. Cluster-independent — part of `just ci`.
+arr-validate: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    oci='kubernetes/apps/media/namespace/app/ocirepository.yaml'
+    chart_url="$(yq -r '.spec.url' "$oci")"
+    chart_tag="$(yq -r '.spec.ref.tag' "$oci")"
+    temp_dir="$(mktemp -d /tmp/homelab-talos-arr-validate.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+
+    for app in prowlarr sonarr radarr; do
+      base="kubernetes/apps/media/$app"
+      ks="$base/ks.yaml"; hr="$base/app/helmrelease.yaml"; values="$base/app/values.yaml"; route="$base/app/httproute.yaml"
+      for f in "$ks" "$hr" "$values" "$route" "$base/app/kustomization.yaml"; do
+        [[ -f "$f" ]] || { echo "Missing Phase 13 source: $f" >&2; exit 1; }
+      done
+      rg -qx "  - ./$app/ks.yaml" kubernetes/apps/media/kustomization.yaml || {
+        echo "Refusing: ./$app/ks.yaml is not wired into kubernetes/apps/media/kustomization.yaml." >&2
+        exit 1
+      }
+
+      suspend_state="$(yq -r '.spec.suspend // false' "$ks")"
+      [[ "$suspend_state" == 'true' || "$suspend_state" == 'false' ]]
+      # No SOPS decryption — these apps carry no secrets (API keys are first-run).
+      [[ "$(yq -r '.spec.decryption // "none"' "$ks")" == 'none' ]] || { echo "$app ks.yaml must not declare decryption (no secrets)." >&2; exit 1; }
+      deps="$(yq -r '[.spec.dependsOn[].name] | sort | join(",")' "$ks")"
+      if [[ "$app" == 'prowlarr' ]]; then
+        [[ "$deps" == 'internal-gateway,media' ]] || { echo "prowlarr dependsOn must be [media, internal-gateway]; got: $deps." >&2; exit 1; }
+      else
+        [[ "$deps" == 'internal-gateway,media-storage' ]] || { echo "$app dependsOn must be [media-storage, internal-gateway]; got: $deps." >&2; exit 1; }
+      fi
+
+      [[ "$(yq -r '.spec.chartRef.name' "$hr")" == 'app-template' ]]
+
+      [[ "$(yq -r ".controllers.$app.strategy" "$values")" == 'Recreate' ]]
+      [[ "$(yq -r ".controllers.$app.containers.app.image.repository" "$values")" == "ghcr.io/home-operations/$app" ]]
+      tag="$(yq -r ".controllers.$app.containers.app.image.tag" "$values")"; [[ -n "$tag" && "$tag" != 'null' ]]
+      [[ "$(yq -r ".controllers.$app.containers.app.securityContext.capabilities.drop[]" "$values" | tr '\n' ' ')" == 'ALL ' ]]
+      [[ "$(yq -r '.persistence.config.accessMode' "$values")" == 'ReadWriteOnce' ]]
+      [[ "$(yq -r '.persistence.config.storageClass' "$values")" == 'longhorn' ]]
+      [[ "$(yq -r '.persistence.config.annotations."helm.sh/resource-policy"' "$values")" == 'keep' ]]
+      if [[ "$app" == 'prowlarr' ]]; then
+        [[ "$(yq -r '.persistence.data // "none"' "$values")" == 'none' ]] || { echo 'prowlarr must not mount media-data (config-only).' >&2; exit 1; }
+      else
+        [[ "$(yq -r '.persistence.data.existingClaim' "$values")" == 'media-data' ]] || { echo "$app must mount media-data at /data." >&2; exit 1; }
+      fi
+
+      [[ "$(yq -r '.spec.hostnames[0]' "$route")" == "$app.lab.supermorphic.com" ]]
+      [[ "$(yq -r '.spec.parentRefs[0].name' "$route")" == 'internal' ]]
+      [[ "$(yq -r '.spec.rules[0].backendRefs[0].name' "$route")" == "$app" ]]
+
+      # A Gatus /ping health probe must exist for this app.
+      rg -q "^    - name: $app\$" kubernetes/apps/monitoring/gatus/app/values.yaml || { echo "$app has no Gatus endpoint." >&2; exit 1; }
+
+      kustomize build "$base/app" >/dev/null
+      helm template "$app" "$chart_url" --version "$chart_tag" --namespace media --values "$values" >"$temp_dir/$app.yaml"
+      [[ "$(yq -r 'select(.kind == "Deployment") | .metadata.name' "$temp_dir/$app.yaml")" == "$app" ]]
+      [[ "$(yq -r 'select(.kind == "Deployment") | .spec.strategy.type' "$temp_dir/$app.yaml")" == 'Recreate' ]]
+      echo "  $app $tag OK"
+    done
+
+    echo 'Phase 13 *arr source (Prowlarr, Sonarr, Radarr), wiring, dependency graph, config/Recreate + shared /data, HTTPRoutes, Gatus probes, and pinned renders passed validation.'
+
+# Verify a live Phase 13 *arr app: `just kube arr-verify <prowlarr|sonarr|radarr>`.
+# Kustomization + HelmRelease Ready, rollout, HTTPRoute Accepted, DNS, and /ping over the
+# internal gateway. Operator-only (needs the cluster); not in `just ci`.
+arr-verify app: require-bash
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    app='{{app}}'
+    case "$app" in prowlarr|sonarr|radarr) ;; *) echo "Usage: just kube arr-verify <prowlarr|sonarr|radarr>" >&2; exit 1;; esac
+    kubeconfig='kubeconfig'
+    ns='media'
+    gateway_ip='192.168.90.30'
+    host="$app.lab.supermorphic.com"
+
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization "$app" --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || { echo "$app Kustomization not Ready." >&2; exit 1; }
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get helmrelease "$app" --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == 'True' ]] || { echo "$app HelmRelease not Ready." >&2; exit 1; }
+    kubectl --kubeconfig "$kubeconfig" --namespace "$ns" rollout status "deployment/$app" --timeout=5m
+    accepted=false
+    for _ in {1..24}; do
+      [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get httproute "$app" --output jsonpath='{.status.parents[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == 'True' ]] && { accepted=true; break; }
+      sleep 5
+    done
+    [[ "$accepted" == 'true' ]] || { echo "$app HTTPRoute was not Accepted." >&2; exit 1; }
+    [[ "$(dig +short @192.168.90.2 "$host" A | sort -u)" == "$gateway_ip" ]] || { echo "DNS for $host does not resolve to $gateway_ip." >&2; exit 1; }
+    curl --silent --fail --resolve "$host:443:$gateway_ip" "https://$host/ping" >/dev/null || { echo "$app /ping not reachable via the gateway." >&2; exit 1; }
+    echo "$app live acceptance passed (Ready, rollout, HTTPRoute Accepted, DNS, /ping)."
+
 # Validate the Phase 10 monitoring source: files, encrypted Grafana Secret,
 # dependency graph, staged-suspend uniformity, key values, wiring, HTTPRoutes,
 # and the pinned kube-prometheus-stack render.
