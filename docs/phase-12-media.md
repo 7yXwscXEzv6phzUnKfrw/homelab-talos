@@ -48,8 +48,9 @@ test (including a hard Gluetun-container kill) is mandatory, not assumed.
   **account-scoped** — Gluetun picks the server from its own list and ignores the
   `.conf`'s endpoint, so the pin is non-secret `values.yaml` config, not the key/`.conf`;
   Gluetun reselects within Sweden if a server is retired.
-- **[C1] `FIREWALL_INPUT_PORTS=8080`** — required so the WebUI is reachable via the Pod
-  interface (Service, Envoy, *arr, kubelet probes). Without it those are dropped.
+- **[C1] `FIREWALL_INPUT_PORTS=8000,8080`** — `8080` so the WebUI is reachable via the Pod
+  interface (Service, Envoy, *arr, kubelet probes); `8000` so Gatus can poll the control
+  server for the reactive VPN-down alert. Without these those inputs are dropped.
 - **[C2] `FIREWALL_OUTBOUND_SUBNETS` — start empty, add only by test.** Cilium DNATs
   Service→Pod IP before Gluetun's egress firewall, so at most the **pod CIDR** (not the
   service CIDR) is ever needed. Observe Gluetun firewall logs during rollout; each
@@ -88,17 +89,54 @@ the **annual manual credential-renewal runbook**, and the VPN-expiry monitoring 
 ## Kill-switch acceptance gate — BLOCKING (`qbittorrent-killswitch-verify`, operator-run)
 
 Not in `just ci`; Phase 12 is not flipped `suspend: false` / not "done" until it passes
-live (the media-stack plan's kill-switch gate + Definition of Done):
+live. The gate is **bulletproof by design**: the node's own WAN IP is captured first (via
+a throwaway no-VPN pod) and threaded through every step as a **hard never-leak
+invariant** — if qBittorrent's egress IP ever equals the home WAN IP, the gate fails
+instantly. All egress probes run **from qBittorrent's own network namespace** (the `app`
+container), not from Gluetun (which has VPN-infra allowances), so they measure exactly
+what a torrent would see.
 
-1. **Baseline up:** public IP (`/v1/publicip/ip`) == ProtonVPN ≠ home WAN; forwarded port
-   active; qBittorrent listening on it.
-2. **Polite stop:** `PUT /v1/vpn/status {stopped}` → from the qBittorrent container an
-   outbound request **times out**; the home WAN IP **never** appears.
-3. **Hard failure:** kill/restart the Gluetun container → qBittorrent still cannot reach a
-   public IP **during the restart** (validates the unexpected-failure path).
-4. **DNS:** no resolution leaks via the node resolver while down.
-5. **Recovery:** VPN back → forwarded port reacquired + reapplied → qBittorrent resumes
-   without manual editing.
+1. **Baseline (up, Sweden, not home):** control server reports `status=running`; public IP
+   ≠ home WAN and **country == Sweden**; qBittorrent's own egress IP == the VPN IP; the
+   forwarded port is active and **applied to qBittorrent's `listen_port`** (proves the UP
+   command ran).
+2. **Polite stop (held down):** `PUT /v1/vpn/status {stopped}`, then over ~15s the `app`
+   container must show **no IP egress** (`ifconfig.me`), **no route-level egress**
+   (Cloudflare `1.1.1.1` by IP, bypassing DNS), and **no DNS resolution** — and never the
+   home IP.
+3. **Hard failure (automated crash):** `kill -KILL 1` on the Gluetun container; across the
+   entire crash+restart window the home WAN IP **must never egress**. Gluetun must
+   auto-recover (native sidecar `restartPolicy: Always`). Validates the unexpected-failure
+   path, not just the polite API stop.
+4. **Recovery:** VPN back → country Sweden again → forwarded port **reacquired and
+   reapplied** to `listen_port` (DOWN→UP cycle) with no manual editing.
+5. **Final:** `status=running`, egress == VPN IP, country Sweden.
+
+A `trap` restores the VPN to `running` on exit so a failed run never leaves it stopped.
+Precondition: first-run done (WebUI password + "Bypass authentication for localhost",
+which the port-forward UP command also needs).
+
+## Observability (reactive VPN-down reporting)
+
+Health is surfaced where each tool fits best; the tunnel status is read from Gluetun's
+control server, exposed **in-cluster only** via ClusterIP `qbittorrent-gluetun-control`
+(no HTTPRoute, no LoadBalancer). `FIREWALL_INPUT_PORTS` admits `8000` alongside `8080`;
+the health route (`GET /v1/vpn/status`) is no-auth, mutating routes stay apikey-gated.
+
+- **Gatus (primary status):** a `Media`-group endpoint `qbittorrent-vpn` probes the
+  control server with a **body condition `[BODY].status == running`** (the control server
+  answers 200 even while the tunnel is down, so status-code alone is insufficient).
+- **Prometheus / Alertmanager (critical alert):** `PrometheusRule` `qbittorrent-vpn` →
+  **`QbittorrentVpnDown` (severity: critical)** fires on `gatus_results_endpoint_success{
+  name="qbittorrent-vpn"} == 0` for 5m, plus `QbittorrentVpnProbeMissing` (warning) if the
+  metric disappears. *Alertmanager has no receiver configured yet — the alert fires and is
+  visible in Alertmanager/Prometheus/Grafana; delivery to a phone/email channel is a
+  follow-up (needs a channel + secret).*
+- **Grafana:** the `gatus_results_endpoint_success` series and the firing alert are
+  queryable/visible without a bespoke dashboard.
+- **Homepage:** the qBittorrent tile (pod-selector) shows pod health; the optional
+  gethomepage Gluetun widget (public IP / country / forwarded port) is deferred because it
+  requires exposing the control-server apikey to Homepage.
 
 ## PR breakdown
 

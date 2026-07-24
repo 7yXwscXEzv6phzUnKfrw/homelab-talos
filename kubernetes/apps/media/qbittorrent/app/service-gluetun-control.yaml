@@ -1,0 +1,24 @@
+---
+# In-cluster-only ClusterIP for Gluetun's control server (:8000). Gatus polls the
+# no-auth health route (GET /v1/vpn/status) for the reactive VPN-down alert; the
+# mutating control routes still require the apikey. NO HTTPRoute and NO LoadBalancer —
+# the control server is never LAN- or internet-exposed. Selector matches the app-template
+# qbittorrent pod (Gluetun shares its network namespace).
+apiVersion: v1
+kind: Service
+metadata:
+  name: qbittorrent-gluetun-control
+  namespace: media
+  labels:
+    app.kubernetes.io/name: qbittorrent
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/controller: qbittorrent
+    app.kubernetes.io/instance: qbittorrent
+    app.kubernetes.io/name: qbittorrent
+  ports:
+    - name: control
+      port: 8000
+      targetPort: 8000
+      protocol: TCP

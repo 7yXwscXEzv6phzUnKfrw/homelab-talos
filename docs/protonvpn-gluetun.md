@@ -94,6 +94,31 @@ On each (re)connect Gluetun runs `VPN_PORT_FORWARDING_UP_COMMAND` to push the po
 qBittorrent (`listen_port`, bind to `tun0`) and `_DOWN_COMMAND` to reset it on
 disconnect. The port is dynamic — do not hard-code it anywhere.
 
+## Why WireGuard (we evaluated both)
+
+We considered **OpenVPN** and **WireGuard**; both meet the hard requirements (Sweden pin,
+port forwarding, fail-closed kill switch) in Gluetun. OpenVPN uses long-lived account
+credentials (`OPENVPN_USER`+`+pmp` / `OPENVPN_PASSWORD`) with **no expiry**, so its only
+real advantage is avoiding the annual renewal below.
+
+We chose **WireGuard** deliberately:
+
+| | WireGuard (chosen) | OpenVPN |
+| --- | --- | --- |
+| Protocol | modern default, in-kernel | legacy, userspace crypto |
+| Throughput / CPU | faster, lighter on the NUCs | slower, higher CPU |
+| Reconnect | near-instant | slower renegotiation → longer stalls |
+| Credential | account-scoped key, **~yearly Extend** | static, no expiry |
+
+Rationale: WireGuard is the modern default, reconnects near-instantly (which matters for
+the kill-switch recovery path and for tunnel flaps), and is faster and lighter on the NUC
+hardware. The **one** downside — the annual manual credential Extend (below) — is a
+~2-minute chore that is fully **mitigated**: a lapse is fail-closed (downloads pause, no
+leak) and is now caught by a reactive critical alert (see "Monitoring the expiration"). We
+judged that acceptable versus OpenVPN's ongoing performance/reconnect cost. Switching to
+OpenVPN later is a small change (swap `VPN_TYPE`, the credentials, and the secrets recipe)
+if the renewal ever proves more trouble than the perf is worth.
+
 ## Annual credential renewal — MANUAL, required
 
 ProtonVPN WireGuard credentials **expire (~1 year)**. Proton exposes an **Extend** action
@@ -119,15 +144,16 @@ Gluetun has no metric for it, and there is no Proton API to query in this flow �
 **nothing in the cluster can autonomously discover the renewal date**. Given that, three
 realistic approaches (recommend #1 + #3):
 
-1. **Reactive critical alert (recommended — real monitoring).** Alert on the *symptom*:
-   the Gluetun control server's no-auth health role (`GET /v1/vpn/status`) reports the VPN
-   not `running`, or qBittorrent egress is blocked, for > 5 min → **critical**. This
-   catches an expired credential *and every other tunnel failure* (Proton outage, node
-   issue, config regression). It is the backstop that guarantees you're never silently
-   offline. Implement with the Phase-14 observability stack: a **Gatus** "Media/VPN" check
-   against the in-cluster control server (never LAN-exposed, never logs the apikey) and/or
-   an Alertmanager `PrometheusRule`. Downside: it fires *after* expiry (at first downtime),
-   not before.
+1. **Reactive critical alert — IMPLEMENTED (Phase 12).** Alert on the *symptom*: the
+   Gluetun control server's no-auth health role (`GET /v1/vpn/status`) reports the VPN not
+   `running` for > 5 min → **critical**. This catches an expired credential *and every
+   other tunnel failure* (Proton outage, node issue, config regression) and is the backstop
+   that guarantees you're never silently offline. Wiring: a **Gatus** `Media/qbittorrent-vpn`
+   check probes the in-cluster control server (ClusterIP `qbittorrent-gluetun-control`,
+   never LAN-exposed, never logs the apikey) with body condition `status == running`;
+   Gatus exports `gatus_results_endpoint_success`, and the `QbittorrentVpnDown`
+   `PrometheusRule` (severity `critical`) fires on it. Downside: it fires *after* expiry (at
+   first downtime), not before. *Alertmanager has no receiver yet — see below.*
 
 2. **Proactive expiry alert (optional, semi-manual).** Store the known renewal date as a
    value you control — e.g. a small static metric (`protonvpn_credential_expiry_timestamp`)

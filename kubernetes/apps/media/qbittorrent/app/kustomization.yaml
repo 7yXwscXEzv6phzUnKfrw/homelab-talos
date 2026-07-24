@@ -4,6 +4,8 @@ kind: Kustomization
 resources:
   - ./helmrelease.yaml
   - ./httproute.yaml
+  - ./service-gluetun-control.yaml
+  - ./prometheusrule.yaml
   - ./protonvpn.sops.yaml
 configMapGenerator:
   - name: qbittorrent-values

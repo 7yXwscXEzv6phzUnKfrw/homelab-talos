@@ -1577,7 +1577,8 @@ qbittorrent-validate: require-bash
     [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.VPN_PORT_FORWARDING' "$values")" == 'on' ]]
     [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.PORT_FORWARD_ONLY' "$values")" == 'on' ]]
     [[ -n "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.SERVER_COUNTRIES // ""' "$values")" ]]
-    [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.FIREWALL_INPUT_PORTS' "$values")" == '8080' ]]
+    # WebUI (8080) + control server (8000) admitted on the pod interface.
+    [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.FIREWALL_INPUT_PORTS' "$values")" == '8000,8080' ]]
     [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH' "$values")" == '/gluetun/auth/config.toml' ]]
     [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.VPN_PORT_FORWARDING_UP_COMMAND' "$values")" != 'null' ]]
     [[ "$(yq -r '.controllers.qbittorrent.initContainers.gluetun.env.VPN_PORT_FORWARDING_DOWN_COMMAND' "$values")" != 'null' ]]
@@ -1593,6 +1594,26 @@ qbittorrent-validate: require-bash
 
     [[ "$(yq -r '.spec.hostnames[0]' "$route")" == 'qbittorrent.lab.supermorphic.com' ]]
     [[ "$(yq -r '.spec.parentRefs[0].name' "$route")" == 'internal' ]]
+
+    # Reactive VPN-down alerting: in-cluster control-server Service (no HTTPRoute) +
+    # a critical PrometheusRule fed by the Gatus health probe.
+    svc="$base/app/service-gluetun-control.yaml"
+    rule="$base/app/prometheusrule.yaml"
+    [[ -f "$svc" && -f "$rule" ]] || {
+      echo "Missing Phase 12 VPN-alert source ($svc / $rule)." >&2
+      exit 1
+    }
+    [[ "$(yq -r '.kind' "$svc")" == 'Service' ]]
+    [[ "$(yq -r '.metadata.name' "$svc")" == 'qbittorrent-gluetun-control' ]]
+    [[ "$(yq -r '.spec.ports[0].port' "$svc")" == '8000' ]]
+    # The control server must never be routed to the gateway/LB.
+    ! rg -qi 'gluetun-control' "$route"
+    [[ "$(yq -r '.kind' "$rule")" == 'PrometheusRule' ]]
+    [[ "$(yq -r '[.spec.groups[].rules[] | select(.alert == "QbittorrentVpnDown") | .labels.severity] | .[0]' "$rule")" == 'critical' ]]
+    rg -q 'gatus_results_endpoint_success' "$rule"
+    # The Gatus health probe that feeds the rule must exist.
+    rg -q 'name: qbittorrent-vpn' kubernetes/apps/monitoring/gatus/app/values.yaml
+    rg -q 'status == running' kubernetes/apps/monitoring/gatus/app/values.yaml
 
     chart_url="$(yq -r '.spec.url' "$oci")"
     chart_tag="$(yq -r '.spec.ref.tag' "$oci")"
@@ -1628,9 +1649,13 @@ qbittorrent-verify: require-bash
     curl --silent --fail --resolve "$host:443:$gateway_ip" "https://$host/" >/dev/null || { echo 'qBittorrent WebUI not reachable via the gateway.' >&2; exit 1; }
     echo 'Phase 12 qBittorrent acceptance passed. Run qbittorrent-killswitch-verify (the blocking VPN gate) before flipping suspend: false.'
 
-# BLOCKING VPN kill-switch gate (handoff §751-758). NOT in `just ci` — operator-run,
-# it mutates the running pod (stops/kills the VPN) and needs the live ProtonVPN tunnel.
-# Proves qBittorrent egresses only through ProtonVPN and fails closed when the VPN drops.
+# BLOCKING, bulletproof VPN kill-switch gate. NOT in `just ci` — operator-run; it mutates
+# the running pod (stops AND hard-kills the VPN) and needs the live ProtonVPN tunnel.
+# Proves qBittorrent egresses ONLY through ProtonVPN Sweden and fails closed on both a
+# polite stop and an unexpected crash, with the home WAN IP as a hard never-leak invariant.
+# Precondition: first-run done (WebUI password set + "Bypass authentication for localhost"
+# enabled, which the port-forward UP command also relies on). Phase 12 is not flipped
+# suspend: false / not "done" until this passes.
 qbittorrent-killswitch-verify: require-bash
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1638,41 +1663,105 @@ qbittorrent-killswitch-verify: require-bash
     kubeconfig='kubeconfig'
     ns='media'
     pod="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" get pod -l app.kubernetes.io/name=qbittorrent -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
-    [[ -n "$pod" ]] || { echo 'No qbittorrent pod found.' >&2; exit 1; }
+    [[ -n "$pod" ]] || { echo 'No qbittorrent pod found (is Phase 12 bootstrapped?).' >&2; exit 1; }
+
     gx() { kubectl --kubeconfig "$kubeconfig" --namespace "$ns" exec "$pod" -c gluetun -- "$@"; }
+    gapp() { kubectl --kubeconfig "$kubeconfig" --namespace "$ns" exec "$pod" -c app -- "$@"; }
     apikey="$(gx sh -c 'grep -E "^apikey" /gluetun/auth/config.toml | sed -E "s/.*\"(.*)\".*/\1/"' 2>/dev/null | tr -d "\r")"
     [[ -n "$apikey" ]] || { echo 'Could not read control-server apikey from /gluetun/auth/config.toml.' >&2; exit 1; }
-    ctl() { gx wget -qO- --header "X-API-Key: $apikey" "$@"; }
+    ctl() { gx wget -qO- --header "X-API-Key: $apikey" "$@" 2>/dev/null; }
+    ctl_put() { gx wget -qO- --method=PUT --header "X-API-Key: $apikey" --body-data "$2" "$1" >/dev/null 2>&1 || true; }
+    vpn_status()  { ctl http://localhost:8000/v1/vpn/status    | yq -r '.status // "unknown"' 2>/dev/null || echo unknown; }
+    vpn_ip()      { ctl http://localhost:8000/v1/publicip/ip   | yq -r '.public_ip // ""' 2>/dev/null || true; }
+    vpn_country() { ctl http://localhost:8000/v1/publicip/ip   | yq -r '.country // ""' 2>/dev/null || true; }
+    fport()       { ctl http://localhost:8000/v1/portforward   | yq -r '.port // ""' 2>/dev/null || true; }
+    listen_port() { gapp sh -c 'wget -qO- -T 6 http://127.0.0.1:8080/api/v2/app/preferences 2>/dev/null' | yq -r '.listen_port // ""' 2>/dev/null || true; }
 
-    # 1. Baseline: VPN public IP (via control server) must differ from the node WAN IP.
-    vpn_ip="$(ctl http://localhost:8000/v1/publicip/ip | yq -r '.public_ip')"
-    [[ -n "$vpn_ip" && "$vpn_ip" != 'null' ]] || { echo 'No VPN public IP from control server.' >&2; exit 1; }
-    node_ip="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" run kswan --image=curlimages/curl:8.11.1 --restart=Never --rm -i --quiet --command -- curl -sS -m 12 https://ifconfig.me 2>/dev/null | tr -d '\r\n ' || true)"
-    echo "VPN public IP=$vpn_ip  node WAN IP=${node_ip:-unknown}"
-    [[ -n "$node_ip" && "$vpn_ip" == "$node_ip" ]] && { echo 'LEAK: qBittorrent VPN egress IP equals the node WAN IP.' >&2; exit 1; }
-    fport="$(ctl http://localhost:8000/v1/portforward | yq -r '.port' 2>/dev/null || echo '?')"
-    echo "forwarded port: $fport"
+    # Always try to leave the VPN running, even if a check fails.
+    trap 'ctl_put http://localhost:8000/v1/vpn/status "{\"status\":\"running\"}"' EXIT
 
-    # 2. Kill switch: stop the VPN, then qBittorrent egress must fail closed.
-    gx wget -qO- --method=PUT --header "X-API-Key: $apikey" --body-data '{"status":"stopped"}' http://localhost:8000/v1/vpn/status >/dev/null
+    # The app container needs wget (BusyBox) to probe egress from qBittorrent's OWN netns.
+    gapp sh -c 'command -v wget >/dev/null' || { echo 'app container lacks wget; cannot probe qBittorrent egress.' >&2; exit 1; }
+
+    # Independent home/WAN reference: a throwaway pod with NO VPN egresses via the node WAN.
+    home_ip="$(kubectl --kubeconfig "$kubeconfig" --namespace "$ns" run "kswan-$RANDOM" --image=curlimages/curl:8.11.1 --restart=Never --rm -i --quiet --command -- curl -sS -m 15 https://ifconfig.me 2>/dev/null | tr -d '\r\n ' || true)"
+    [[ -n "$home_ip" ]] || { echo 'Could not determine the node WAN IP (needed as the leak reference).' >&2; exit 1; }
+    echo "Reference home/WAN IP (must NEVER appear as qBittorrent egress): $home_ip"
+
+    # Egress FROM qBittorrent's netns: prints the observed public IP, or empty if blocked.
+    app_egress() { gapp sh -c 'wget -qO- -T 6 https://ifconfig.me 2>/dev/null || true' | tr -d '\r\n '; }
+    # Route-level probe bypassing DNS (connect to Cloudflare by IP): non-empty if reachable.
+    app_route()  { gapp sh -c 'wget -qO- -T 6 https://1.1.1.1/ 2>/dev/null | head -c 1 || true' | tr -d '\r\n '; }
+    leak_guard() { [[ -n "$1" && "$1" == "$home_ip" ]] && { echo "LEAK ($2): qBittorrent egress IP == home WAN IP $home_ip." >&2; exit 1; }; return 0; }
+
+    echo '== 1. Baseline (VPN up, must be Sweden, not home) =='
+    [[ "$(vpn_status)" == 'running' ]] || { echo 'VPN is not running at baseline.' >&2; exit 1; }
+    vip="$(vpn_ip)"; country="$(vpn_country)"; fp="$(fport)"
+    [[ -n "$vip" ]] || { echo 'No VPN public IP from the control server.' >&2; exit 1; }
+    echo "VPN public IP=$vip country=$country forwarded_port=$fp"
+    [[ "$vip" != "$home_ip" ]] || { echo 'LEAK: VPN public IP equals the home WAN IP.' >&2; exit 1; }
+    printf '%s' "$country" | grep -qi 'sweden' || { echo "VPN egress country is '$country', not Sweden (SERVER_COUNTRIES=Sweden not honored)." >&2; exit 1; }
+    be="$(app_egress)"; echo "qBittorrent egress IP=$be"
+    leak_guard "$be" 'baseline'
+    [[ "$be" == "$vip" ]] || { echo "qBittorrent egress ($be) != VPN IP ($vip)." >&2; exit 1; }
+    [[ -n "$fp" && "$fp" != '0' ]] || { echo 'No active forwarded port at baseline.' >&2; exit 1; }
+    lp="$(listen_port)"
+    [[ "$lp" == "$fp" ]] || { echo "qBittorrent listen_port ($lp) != forwarded port ($fp). Enable localhost auth bypass + confirm the UP command ran." >&2; exit 1; }
+    echo "listen_port matches forwarded port ($fp)."
+
+    echo '== 2. Kill switch: polite stop (VPN held down) =='
+    ctl_put http://localhost:8000/v1/vpn/status '{"status":"stopped"}'
     sleep 3
-    if kubectl --kubeconfig "$kubeconfig" --namespace "$ns" exec "$pod" -c app -- sh -c 'wget -qO- -T 8 https://ifconfig.me' >/dev/null 2>&1; then
-      gx wget -qO- --method=PUT --header "X-API-Key: $apikey" --body-data '{"status":"running"}' http://localhost:8000/v1/vpn/status >/dev/null 2>&1 || true
-      echo 'LEAK: qBittorrent reached the internet with the VPN stopped.' >&2
-      exit 1
-    fi
-    echo 'Kill switch holds: qBittorrent egress blocked while the VPN is stopped.'
-
-    # 3. Recovery: restart the VPN, confirm the public IP returns.
-    gx wget -qO- --method=PUT --header "X-API-Key: $apikey" --body-data '{"status":"running"}' http://localhost:8000/v1/vpn/status >/dev/null
-    back=false
-    for _ in {1..24}; do
-      ip="$(ctl http://localhost:8000/v1/publicip/ip 2>/dev/null | yq -r '.public_ip' 2>/dev/null || true)"
-      [[ -n "$ip" && "$ip" != 'null' ]] && { back=true; echo "VPN recovered, public IP=$ip"; break; }
-      sleep 10
+    [[ "$(vpn_status)" != 'running' ]] || { echo 'VPN still running after stop request.' >&2; exit 1; }
+    for _ in 1 2 3 4 5; do
+      out="$(app_egress)"; leak_guard "$out" 'vpn-stopped'
+      [[ -z "$out" ]] || { echo "LEAK: qBittorrent reached the internet ($out) with the VPN stopped." >&2; exit 1; }
+      [[ -z "$(app_route)" ]] || { echo 'LEAK: route-level egress (1.1.1.1) succeeded with the VPN stopped.' >&2; exit 1; }
+      sleep 3
     done
+    if gapp sh -c 'command -v nslookup >/dev/null' && gapp sh -c 'nslookup cloudflare.com >/dev/null 2>&1'; then
+      echo 'LEAK: public DNS resolved while the VPN was down (DNS egress not isolated).' >&2; exit 1
+    fi
+    echo 'Kill switch holds: no IP egress, no route egress, no DNS while the VPN is stopped.'
+
+    echo '== 3. Recovery from stop (Sweden + forwarded port reapplied) =='
+    ctl_put http://localhost:8000/v1/vpn/status '{"status":"running"}'
+    back=false
+    for _ in {1..30}; do [[ "$(vpn_status)" == 'running' && -n "$(vpn_ip)" ]] && { back=true; break; }; sleep 5; done
     [[ "$back" == 'true' ]] || { echo 'VPN did not recover after restart.' >&2; exit 1; }
-    echo 'Phase 12 kill-switch verify passed: VPN egress isolated, fail-closed on VPN stop, recovered on restart. Also power-test by killing the gluetun container and re-running if you want the hard-failure path.'
+    rip="$(vpn_ip)"; rc="$(vpn_country)"; leak_guard "$rip" 'recovery'
+    printf '%s' "$rc" | grep -qi 'sweden' || { echo "Recovered country '$rc' is not Sweden." >&2; exit 1; }
+    rport=''; for _ in {1..18}; do rport="$(fport)"; [[ -n "$rport" && "$rport" != '0' ]] && break; sleep 5; done
+    [[ -n "$rport" && "$rport" != '0' ]] || { echo 'Forwarded port not reacquired after recovery.' >&2; exit 1; }
+    rlp=''; for _ in {1..12}; do rlp="$(listen_port)"; [[ "$rlp" == "$rport" ]] && break; sleep 5; done
+    [[ "$rlp" == "$rport" ]] || { echo "After recovery, listen_port ($rlp) != forwarded port ($rport) (UP command did not reapply)." >&2; exit 1; }
+    echo "Recovered: IP=$rip country=$rc forwarded_port=$rport reapplied to listen_port."
+
+    echo '== 4. Hard failure: kill the Gluetun container (unexpected crash) =='
+    gx sh -c 'kill -KILL 1 2>/dev/null || kill -TERM 1 2>/dev/null || true' || true
+    # Strict invariant across the whole crash+restart window: the home IP must NEVER egress.
+    win="$(gapp sh -c '
+      end=$(( $(date +%s) + 30 )); seen=
+      while [ "$(date +%s)" -lt "$end" ]; do
+        o=$(wget -qO- -T 4 https://ifconfig.me 2>/dev/null || true); [ -n "$o" ] && seen="$seen $o"
+        sleep 2
+      done
+      echo "$seen"' | tr -s ' ')"
+    echo "egress IPs observed during the gluetun crash window:${win:- none}"
+    for ip in $win; do
+      [[ "$ip" == "$home_ip" ]] && { echo "LEAK: home WAN IP $home_ip egressed during the gluetun crash/restart." >&2; exit 1; }
+    done
+    hard=false
+    for _ in {1..36}; do [[ "$(vpn_status)" == 'running' && -n "$(vpn_ip)" ]] && { hard=true; break; }; sleep 5; done
+    [[ "$hard" == 'true' ]] || { echo 'Gluetun did not auto-recover after the hard kill (native sidecar restartPolicy: Always).' >&2; exit 1; }
+    echo 'Hard-failure path clean: no home-IP leak during the crash; Gluetun auto-recovered.'
+
+    echo '== 5. Final state =='
+    [[ "$(vpn_status)" == 'running' ]] || { echo 'VPN not running at final check.' >&2; exit 1; }
+    fip="$(vpn_ip)"; fc="$(vpn_country)"; fe="$(app_egress)"; leak_guard "$fe" 'final'
+    [[ "$fe" == "$fip" ]] || { echo "Final qBittorrent egress ($fe) != VPN IP ($fip)." >&2; exit 1; }
+    printf '%s' "$fc" | grep -qi 'sweden' || { echo "Final country '$fc' not Sweden." >&2; exit 1; }
+    echo "PASS: kill switch is bulletproof — egress only via ProtonVPN Sweden ($fip); fail-closed on polite stop AND hard crash; DNS isolated; forwarded port reacquired+reapplied; home WAN IP ($home_ip) never leaked. Safe to flip suspend: false."
 
 # Validate the Phase 10 monitoring source: files, encrypted Grafana Secret,
 # dependency graph, staged-suspend uniformity, key values, wiring, HTTPRoutes,

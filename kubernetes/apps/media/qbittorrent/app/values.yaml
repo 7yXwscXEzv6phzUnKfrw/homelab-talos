@@ -29,8 +29,10 @@ controllers:
           VPN_PORT_FORWARDING: "on"
           PORT_FORWARD_ONLY: "on"
           SERVER_COUNTRIES: Sweden
-          # Allow the WebUI in via the Pod interface (Service/Envoy/*arr/probes).
-          FIREWALL_INPUT_PORTS: "8080"
+          # Allow the WebUI (8080) and the control server (8000) in via the Pod
+          # interface. 8000 lets Gatus poll the no-auth health route for the reactive
+          # VPN-down alert; mutating control routes still require the apikey.
+          FIREWALL_INPUT_PORTS: "8000,8080"
           # FIREWALL_OUTBOUND_SUBNETS left unset on purpose — Cilium DNATs Service->Pod
           # before Gluetun's egress firewall, so at most the pod CIDR is ever needed.
           # Add it only if a required flow proves necessary (watch the firewall logs).
@@ -92,6 +94,10 @@ controllers:
           liveness: { enabled: false }
           startup: { enabled: false }
 service:
+  # Single app-template service so it renders as `qbittorrent` (the HTTPRoute backend).
+  # Gluetun's control port 8000 is exposed via a standalone Service manifest
+  # (service-gluetun-control.yaml) to avoid app-template suffixing this one to
+  # `qbittorrent-app`.
   app:
     controller: qbittorrent
     ports:
