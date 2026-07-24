@@ -34,6 +34,7 @@ ci:
     just kube media-storage-validate
     just kube plex-validate
     just kube intel-gpu-plugin-validate
+    just kube qbittorrent-validate
     just kube monitoring-validate
     just kube gatus-validate
     just kube homepage-validate

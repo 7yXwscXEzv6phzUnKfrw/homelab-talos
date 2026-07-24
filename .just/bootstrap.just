@@ -1225,6 +1225,72 @@ plex:
     bootstrap_complete=true
     echo 'Phase 11 Plex live acceptance passed. Set suspend=false in Git, commit, push, and rerun just kube plex-verify. Then do the node-failure reschedule test in docs/phase-11-media.md.'
 
+# Reconcile the suspended Phase 12 qBittorrent+Gluetun after guarded checks, then verify.
+# Requires the protonvpn Secret (just repo protonvpn-secrets) and media-storage already
+# bootstrapped. Flux decrypts the Secret in-cluster. After verify, run the BLOCKING
+# just kube qbittorrent-killswitch-verify before flipping suspend=false. On failure the
+# resumed Kustomization is re-suspended while its resources are preserved.
+qbittorrent:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    kubeconfig='kubeconfig'
+    owner='7yXwscXEzv6phzUnKfrw'
+    repository='homelab-talos'
+    expected_origin="https://github.com/${owner}/${repository}.git"
+    expected_confirmation='bootstrap:phase12:qbittorrent'
+    ks='kubernetes/apps/media/qbittorrent/ks.yaml'
+    resumed=false
+    bootstrap_complete=false
+    cleanup_qbt() {
+      if [[ "$bootstrap_complete" != 'true' && "$resumed" == 'true' ]]; then
+        echo 'Phase 12 qBittorrent did not pass; suspending it while preserving its resources.' >&2
+        flux suspend kustomization qbittorrent --namespace flux-system --kubeconfig "$kubeconfig" >/dev/null 2>&1 || true
+      fi
+    }
+    trap cleanup_qbt EXIT
+
+    [[ -f "$kubeconfig" ]] || { echo 'Missing ignored kubeconfig.' >&2; exit 1; }
+    [[ "$(git branch --show-current)" == 'main' ]]
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo 'Refusing qbittorrent bootstrap: commit and push the reviewed suspended source first.' >&2
+      exit 1
+    }
+    [[ "$(git remote get-url origin)" == "$expected_origin" ]]
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    [[ "$remote_head" == "$(git rev-parse HEAD)" ]] || {
+      echo 'Refusing qbittorrent bootstrap: local HEAD and origin/main differ.' >&2
+      exit 1
+    }
+    [[ "$(yq -r '.spec.suspend' "$ks")" == 'true' ]] || {
+      echo 'Refusing qbittorrent bootstrap: it must be staged suspended in Git.' >&2
+      exit 1
+    }
+
+    just kube qbittorrent-validate
+    flux reconcile source git flux-system --kubeconfig "$kubeconfig"
+    just kube flux-verify
+    flux reconcile kustomization cluster-apps --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization qbittorrent --output jsonpath='{.spec.suspend}')" == 'true' ]] || {
+      echo 'Refusing qbittorrent bootstrap: it is not suspended in the live cluster.' >&2
+      exit 1
+    }
+
+    [[ "${QBITTORRENT_BOOTSTRAP_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to reconcile the Phase 12 qBittorrent+Gluetun pod.' >&2
+      echo "Set QBITTORRENT_BOOTSTRAP_CONFIRM='$expected_confirmation' after reviewing qbittorrent-validate." >&2
+      exit 1
+    }
+
+    resumed=true
+    flux resume kustomization qbittorrent --namespace flux-system --kubeconfig "$kubeconfig"
+    flux reconcile kustomization qbittorrent --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 15m
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait --for=condition=Ready kustomization/qbittorrent --timeout=15m
+
+    just kube qbittorrent-verify
+    bootstrap_complete=true
+    echo 'Phase 12 qBittorrent live acceptance passed. NOW run the BLOCKING gate: just kube qbittorrent-killswitch-verify. Only after it passes, set suspend=false in Git, commit, push, and rerun just kube qbittorrent-verify.'
+
 # Reconcile the suspended Phase 11 Intel GPU device plugin after guarded checks, then
 # verify. Deploy + activate this BEFORE adding the gpu.intel.com/i915 request to Plex
 # (requesting a resource that is not yet advertised would leave Plex pod Pending). On

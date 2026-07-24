@@ -71,6 +71,17 @@ config:
       interval: 1m
       conditions:
         - "[STATUS] == 200"
+    # qBittorrent VPN health: probe Gluetun's control server in-cluster (never LAN-
+    # exposed). The control server answers 200 even while the tunnel is down, so the
+    # body condition (status == running) is what actually detects a VPN drop. Feeds the
+    # QbittorrentVpnDown critical PrometheusRule via gatus_results_endpoint_success.
+    - name: qbittorrent-vpn
+      group: Media
+      url: "http://qbittorrent-gluetun-control.media.svc.cluster.local:8000/v1/vpn/status"
+      interval: 1m
+      conditions:
+        - "[STATUS] == 200"
+        - "[BODY].status == running"
     # External dependency cert-manager relies on for wildcard-cert renewal.
     - name: letsencrypt-acme
       group: External

@@ -429,6 +429,73 @@ media-smb-secrets:
     mv -- "$temp_dir/smb-credentials.sops.yaml" "$target"
     echo "Wrote SOPS-encrypted $target (smb-credentials in media)."
 
+# Write the SOPS-encrypted ProtonVPN Secret for the qBittorrent+Gluetun pod: the
+# WireGuard private key plus a generated Gluetun control-server auth config.toml
+# (no-auth health role + apikey-guarded mutating routes). The operator supplies ONLY
+# WIREGUARD_PRIVATE_KEY (ProtonVPN dashboard -> WireGuard config with NAT-PMP/port
+# forwarding on a P2P server); Gluetun auto-selects the server via PORT_FORWARD_ONLY.
+# Never echoes the key or the apikey.
+protonvpn-secrets:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    expected_confirmation='write:media:protonvpn:sops'
+    target='kubernetes/apps/media/qbittorrent/app/protonvpn.sops.yaml'
+    temp_dir="$(mktemp -d /tmp/homelab-talos-protonvpn-secrets.XXXXXX)"
+    trap 'rm -rf -- "$temp_dir"' EXIT
+    umask 077
+
+    just repo secrets
+    [[ -n "${WIREGUARD_PRIVATE_KEY:-}" ]] || {
+      echo 'Set WIREGUARD_PRIVATE_KEY to the ProtonVPN WireGuard PrivateKey (generate a WireGuard config with port forwarding/NAT-PMP enabled on a P2P server).' >&2
+      exit 1
+    }
+    [[ "${PROTONVPN_SECRETS_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo 'Refusing to write the ProtonVPN Secret.' >&2
+      echo "Set PROTONVPN_SECRETS_CONFIRM='$expected_confirmation' after reviewing the target." >&2
+      exit 1
+    }
+
+    # Generate a control-server API key for the mutating routes (health stays no-auth).
+    apikey="$(openssl rand -hex 32)"
+    cat >"$temp_dir/config.toml" <<TOML
+    [[roles]]
+    name = "health"
+    routes = ["GET /v1/vpn/status"]
+    auth = "none"
+
+    [[roles]]
+    name = "vpn_control"
+    routes = ["PUT /v1/vpn/status", "GET /v1/publicip/ip", "GET /v1/portforward"]
+    auth = "apikey"
+    apikey = "$apikey"
+    TOML
+    # strip the leading indentation the heredoc kept
+    sed -i '' 's/^    //' "$temp_dir/config.toml" 2>/dev/null || sed -i 's/^    //' "$temp_dir/config.toml"
+
+    export WIREGUARD_PRIVATE_KEY
+    CONTROL_CONFIG="$(cat "$temp_dir/config.toml")"
+    export CONTROL_CONFIG
+    yq -n \
+      '.apiVersion = "v1" |
+       .kind = "Secret" |
+       .metadata.name = "protonvpn" |
+       .metadata.namespace = "media" |
+       .type = "Opaque" |
+       .stringData."WIREGUARD_PRIVATE_KEY" = strenv(WIREGUARD_PRIVATE_KEY) |
+       .stringData."config.toml" = strenv(CONTROL_CONFIG)' \
+      >"$temp_dir/protonvpn.yaml"
+
+    sops --encrypt --filename-override "$target" \
+      "$temp_dir/protonvpn.yaml" >"$temp_dir/protonvpn.sops.yaml"
+    [[ "$(sops filestatus "$temp_dir/protonvpn.sops.yaml" | yq -r '.encrypted')" == 'true' ]]
+    [[ "$(yq -r '.sops.age[].recipient' "$temp_dir/protonvpn.sops.yaml" | sort -u)" == "$(yq -r '.creation_rules[1].age' .sops.yaml)" ]]
+    ! rg -Fq -- "$WIREGUARD_PRIVATE_KEY" "$temp_dir/protonvpn.sops.yaml"
+    ! rg -Fq -- "$apikey" "$temp_dir/protonvpn.sops.yaml"
+
+    mv -- "$temp_dir/protonvpn.sops.yaml" "$target"
+    echo "Wrote SOPS-encrypted $target (protonvpn in media). Control-server apikey is embedded in the encrypted config.toml."
+
 # Write only the SOPS-encrypted Grafana admin Secret for kube-prometheus-stack
 # from GRAFANA_ADMIN_USER/GRAFANA_ADMIN_PASSWORD. Never echoes the password.
 monitoring-secrets:
