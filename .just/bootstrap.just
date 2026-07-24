@@ -1291,6 +1291,75 @@ qbittorrent:
     bootstrap_complete=true
     echo 'Phase 12 qBittorrent live acceptance passed. NOW run the BLOCKING gate: just kube qbittorrent-killswitch-verify. Only after it passes, set suspend=false in Git, commit, push, and rerun just kube qbittorrent-verify.'
 
+# Reconcile a suspended Phase 13 *arr app after guarded checks, then verify:
+#   just bootstrap arr <prowlarr|sonarr|radarr>
+# Operator-run. Requires committed+pushed suspended source on main and
+# ARR_BOOTSTRAP_CONFIRM='bootstrap:phase13:<app>'. On failure the resumed Kustomization
+# is re-suspended while its resources are preserved. Recommended order: prowlarr, then
+# sonarr and radarr.
+arr app:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    app='{{app}}'
+    case "$app" in prowlarr|sonarr|radarr) ;; *) echo "Usage: just bootstrap arr <prowlarr|sonarr|radarr>" >&2; exit 1;; esac
+    kubeconfig='kubeconfig'
+    owner='7yXwscXEzv6phzUnKfrw'
+    repository='homelab-talos'
+    expected_origin="https://github.com/${owner}/${repository}.git"
+    expected_confirmation="bootstrap:phase13:$app"
+    ks="kubernetes/apps/media/$app/ks.yaml"
+    resumed=false
+    bootstrap_complete=false
+    cleanup_arr() {
+      if [[ "$bootstrap_complete" != 'true' && "$resumed" == 'true' ]]; then
+        echo "Phase 13 $app did not pass; suspending it while preserving its resources." >&2
+        flux suspend kustomization "$app" --namespace flux-system --kubeconfig "$kubeconfig" >/dev/null 2>&1 || true
+      fi
+    }
+    trap cleanup_arr EXIT
+
+    [[ -f "$kubeconfig" ]] || { echo 'Missing ignored kubeconfig.' >&2; exit 1; }
+    [[ "$(git branch --show-current)" == 'main' ]]
+    [[ -z "$(git status --porcelain)" ]] || {
+      echo "Refusing $app bootstrap: commit and push the reviewed suspended source first." >&2
+      exit 1
+    }
+    [[ "$(git remote get-url origin)" == "$expected_origin" ]]
+    remote_head="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+    [[ "$remote_head" == "$(git rev-parse HEAD)" ]] || {
+      echo "Refusing $app bootstrap: local HEAD and origin/main differ." >&2
+      exit 1
+    }
+    [[ "$(yq -r '.spec.suspend' "$ks")" == 'true' ]] || {
+      echo "Refusing $app bootstrap: it must be staged suspended in Git." >&2
+      exit 1
+    }
+
+    just kube arr-validate
+    flux reconcile source git flux-system --kubeconfig "$kubeconfig"
+    just kube flux-verify
+    flux reconcile kustomization cluster-apps --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 10m
+    [[ "$(kubectl --kubeconfig "$kubeconfig" --namespace flux-system get kustomization "$app" --output jsonpath='{.spec.suspend}')" == 'true' ]] || {
+      echo "Refusing $app bootstrap: it is not suspended in the live cluster." >&2
+      exit 1
+    }
+
+    [[ "${ARR_BOOTSTRAP_CONFIRM:-}" == "$expected_confirmation" ]] || {
+      echo "Refusing to reconcile the Phase 13 $app app." >&2
+      echo "Set ARR_BOOTSTRAP_CONFIRM='$expected_confirmation' after reviewing arr-validate." >&2
+      exit 1
+    }
+
+    resumed=true
+    flux resume kustomization "$app" --namespace flux-system --kubeconfig "$kubeconfig"
+    flux reconcile kustomization "$app" --namespace flux-system --with-source --kubeconfig "$kubeconfig" --timeout 15m
+    kubectl --kubeconfig "$kubeconfig" --namespace flux-system wait --for=condition=Ready "kustomization/$app" --timeout=15m
+
+    just kube arr-verify "$app"
+    bootstrap_complete=true
+    echo "Phase 13 $app live acceptance passed. Set suspend=false in Git, commit, push, and rerun just kube arr-verify $app. Then wire first-run: Prowlarr indexers -> Sonarr/Radarr; root folders /data/media/{tv,movies}; download client http://qbittorrent.media.svc.cluster.local:8080."
+
 # Reconcile the suspended Phase 11 Intel GPU device plugin after guarded checks, then
 # verify. Deploy + activate this BEFORE adding the gpu.intel.com/i915 request to Plex
 # (requesting a resource that is not yet advertised would leave Plex pod Pending). On

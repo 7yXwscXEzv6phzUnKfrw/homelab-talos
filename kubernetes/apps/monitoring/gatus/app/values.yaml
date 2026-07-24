@@ -82,6 +82,26 @@ config:
       conditions:
         - "[STATUS] == 200"
         - "[BODY].status == running"
+    # *arr automation (black-box through the internal gateway). /ping is each app's
+    # unauthenticated health endpoint (no API key) and returns 200 when serving.
+    - name: prowlarr
+      group: Media
+      url: "https://prowlarr.lab.supermorphic.com/ping"
+      interval: 1m
+      conditions:
+        - "[STATUS] == 200"
+    - name: sonarr
+      group: Media
+      url: "https://sonarr.lab.supermorphic.com/ping"
+      interval: 1m
+      conditions:
+        - "[STATUS] == 200"
+    - name: radarr
+      group: Media
+      url: "https://radarr.lab.supermorphic.com/ping"
+      interval: 1m
+      conditions:
+        - "[STATUS] == 200"
     # External dependency cert-manager relies on for wildcard-cert renewal.
     - name: letsencrypt-acme
       group: External

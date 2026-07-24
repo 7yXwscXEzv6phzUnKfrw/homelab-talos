@@ -1,0 +1,80 @@
+# Phase 13: Media Platform — Automation (Prowlarr, Sonarr, Radarr)
+
+## Status
+
+**Staged (`suspend: true`).** Three bjw-s app-template apps in the `media` namespace:
+**Prowlarr** (indexer manager), **Sonarr** (TV), **Radarr** (movies). Low-risk relative to
+Phase 12 — no VPN, no privileged containers, no secrets in Git (API keys and inter-app
+links are first-run settings persisted in each config PVC). Rolled out per app by the
+operator after `just ci`.
+
+## Design (uniform across the three)
+
+- One HelmRelease per app (app-template `5.0.1`, OCIRepository `app-template`), single
+  replica, `strategy: Recreate` on a **Longhorn RWO** config PVC (single-writer SQLite),
+  `helm.sh/resource-policy: keep` so config survives a teardown. Runtime `568:568`, drops
+  all caps, no privilege escalation. Health via `/ping` (unauthenticated 200) for all
+  three probes — a hung app fails readiness instead of falsely passing a TCP check.
+- **Prowlarr** — config-only (`:9696`); it pushes indexers to Sonarr/Radarr over their
+  APIs, so it needs no `/data`. `dependsOn: [media, internal-gateway]`.
+- **Sonarr** (`:8989`) / **Radarr** (`:7878`) — also mount the shared SMB PVC
+  `media-data` at `/data`, so imports **hardlink** from `/data/downloads` into
+  `/data/media/{tv,movies}` (same filesystem — never a copy). `dependsOn:
+  [media-storage, internal-gateway]`.
+- HTTPRoutes `{prowlarr,sonarr,radarr}.lab.supermorphic.com` (internal gateway, wildcard
+  TLS) with `gethomepage.dev` service tiles (pod-selector). No live widgets yet (those need
+  each app's API key).
+- **Image pins:** `prowlarr 2.1.5.5216`, `sonarr 4.0.18.2978`, `radarr 5.28.0.10205`.
+  Radarr is pinned to the latest **v5** rather than the new **v6.0.0** major — deliberately
+  conservative for a fresh, not-yet-live-tested install; bump to 6.x when ready.
+
+## Dependency graph
+
+```text
+media  (namespace + app-template OCIRepository)
+├── prowlarr        [media, internal-gateway]
+media-storage  (static RWX SMB PV + media-data PVC)
+├── sonarr          [media-storage, internal-gateway]
+└── radarr          [media-storage, internal-gateway]
+```
+
+## Observability
+
+Gatus `Media`-group `/ping` probes for `prowlarr`, `sonarr`, `radarr` (black-box through
+the gateway → proves DNS → gateway → app). Homepage shows a pod-status tile per app.
+
+## Validation
+
+`just ci` includes `arr-validate` (one recipe over all three): files, wiring, no-secret
+`ks`, dependency graph, app-template chartRef, config PVC (RWO + Recreate + keep), shared
+`/data` for sonarr/radarr, HTTPRoutes, a matching Gatus probe, and the pinned render.
+
+## Rollout (operator, after merge — per app)
+
+Recommended order: **Prowlarr first**, then Sonarr and Radarr.
+
+```bash
+# on main, synced; e.g. for prowlarr
+export ARR_BOOTSTRAP_CONFIRM='bootstrap:phase13:prowlarr'
+just bootstrap arr prowlarr
+just kube arr-verify prowlarr
+# then set suspend: false in Git for prowlarr/ks.yaml, commit, push, rerun arr-verify
+```
+
+Repeat with `sonarr` / `radarr` (confirm string `bootstrap:phase13:<app>`).
+
+### First-run wiring (manual, persists in config PVCs)
+
+1. **Prowlarr** → add indexers → add Sonarr & Radarr as **Apps** (their URLs +
+   API keys) so indexers sync automatically.
+2. **Sonarr/Radarr** → **Download client** = qBittorrent at
+   `http://qbittorrent.media.svc.cluster.local:8080`; **root folders**
+   `/data/media/tv` and `/data/media/movies`.
+3. Confirm the qBittorrent save path is under `/data/downloads` so imports hardlink.
+
+## End-to-end gate (deferred — do not claim Phase 13 "done" until)
+
+A full **request → download → hardlink import → visible in Plex** run, which depends on
+Phase 12's kill-switch gate having passed and qBittorrent being active. Capture that
+evidence (and the hardlink proof already recorded in `docs/phase-11-media.md`) when
+Phase 12 is live.
